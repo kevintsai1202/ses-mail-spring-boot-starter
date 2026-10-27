@@ -30,14 +30,37 @@ public class SesMailProperties {
     private final Queue queue = new Queue();
     /** 退信／檢舉事件 webhook 設定 */
     private final Sns sns = new Sns();
+    /** 從 SQS 拉取事件的設定 */
+    private final Sqs sqs = new Sqs();
+
+    /** 從 SQS 拉取 SES 事件（SNS → SQS）設定；允許的 topic 共用 sesmail.sns.topic-arns */
+    public static class Sqs {
+        /** 是否啟用拉取；與 sesmail.enabled、sesmail.sns.enabled 互相獨立 */
+        private boolean enabled = false;
+        /** 佇列網址（必填） */
+        private String queueUrl;
+        /** 佇列所在區域；空白時沿用 sesmail.region */
+        private String region;
+        /** 是否隨應用程式自動開始拉取 */
+        private boolean autoStart = true;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getQueueUrl() { return queueUrl; }
+        public void setQueueUrl(String queueUrl) { this.queueUrl = queueUrl; }
+        public String getRegion() { return region; }
+        public void setRegion(String region) { this.region = region; }
+        public boolean isAutoStart() { return autoStart; }
+        public void setAutoStart(boolean autoStart) { this.autoStart = autoStart; }
+    }
 
     /** 退信／檢舉事件（SNS HTTPS 訂閱）設定 */
     public static class Sns {
-        /** 是否註冊 webhook；與 sesmail.enabled 互相獨立 */
+        /** 是否註冊 HTTPS webhook；與 sesmail.enabled 互相獨立（建議改用 sesmail.sqs） */
         private boolean enabled = false;
         /** webhook 路徑 */
         private String path = "/sesmail/sns";
-        /** 允許的 SNS topic ARN（必填）；其他 topic 的訊息一律拒絕 */
+        /** 允許的 SNS topic ARN（webhook 與 SQS 模式都必填）；其他 topic 的訊息一律拒絕 */
         private java.util.List<String> topicArns = new java.util.ArrayList<>();
         /** topic 所在區域；空白時沿用 sesmail.region */
         private String region;
@@ -81,4 +104,5 @@ public class SesMailProperties {
     public void setDispatchInterval(Duration dispatchInterval) { this.dispatchInterval = dispatchInterval; }
     public Queue getQueue() { return queue; }
     public Sns getSns() { return sns; }
+    public Sqs getSqs() { return sqs; }
 }

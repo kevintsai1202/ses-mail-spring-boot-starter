@@ -1,4 +1,4 @@
--- ses-mail-spring-boot-starter 的待寄佇列。與 survey-backend 的 V27 逐欄相同。
+-- ses-mail-spring-boot-starter 的待寄佇列。
 -- 用 Flyway 的專案請把本檔內容複製成自己的下一個 migration；沒用 Flyway 的可設 sesmail.queue.initialize-schema=true。
 CREATE TABLE IF NOT EXISTS scheduled_mail (
     id                  BIGSERIAL PRIMARY KEY,
@@ -20,3 +20,6 @@ CREATE TABLE IF NOT EXISTS scheduled_mail (
 
 -- 派送器只撈到期的 PENDING
 CREATE INDEX IF NOT EXISTS idx_scheduled_mail_due ON scheduled_mail (next_attempt_at, id) WHERE status = 'PENDING';
+
+-- 0.3.0 起：退信／送達事件以 SES MessageId 反查參照
+CREATE INDEX IF NOT EXISTS idx_scheduled_mail_message_id ON scheduled_mail (provider_message_id);

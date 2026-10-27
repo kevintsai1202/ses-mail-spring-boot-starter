@@ -93,8 +93,8 @@ public class SesMailAutoConfiguration {
         return new SesQuotaService(ses, queue);
     }
 
-    /** 兩把金鑰都有給才用靜態憑證，否則用 SDK 預設憑證鏈 */
-    private static AwsCredentialsProvider credentials(SesMailProperties properties) {
+    /** 兩把金鑰都有給才用靜態憑證，否則用 SDK 預設憑證鏈；SQS 客戶端共用 */
+    public static AwsCredentialsProvider credentials(SesMailProperties properties) {
         if (hasText(properties.getAccessKeyId()) && hasText(properties.getSecretAccessKey())) {
             return StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(properties.getAccessKeyId(), properties.getSecretAccessKey()));

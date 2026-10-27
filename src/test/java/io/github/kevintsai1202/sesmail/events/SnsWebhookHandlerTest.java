@@ -38,7 +38,7 @@ class SnsWebhookHandlerTest {
         confirmer = mock(SubscriptionConfirmer.class);
         listener = mock(SesEventListener.class);
         handler = new SnsWebhookHandler(verifier, Set.of(TOPIC), "ap-northeast-1", confirmer,
-            new SesEventParser(), () -> List.of(listener));
+            new SesEventParser(id -> id), () -> List.of(listener));
     }
 
     /** 組一則 SNS 通知 */
@@ -101,28 +101,53 @@ class SnsWebhookHandlerTest {
         when(verifier.verify("body")).thenReturn(notification(TOPIC, event));
 
         assertEquals(SnsWebhookHandler.Result.NOTIFIED, handler.handle("body"));
-        verify(listener).onBounce(new SesBounce("Permanent", "General", List.of("a@example.com"), "m-1"));
+        verify(listener).onBounce(new SesBounce("m-1", "Permanent", "General", List.of("a@example.com"), "m-1"));
     }
 
-    /** 檢舉通知：分派給 listener；listener 拋例外仍回 NOTIFIED（交給 SNS 重送沒有幫助） */
+    /** 檢舉通知：分派給 listener；listener 拋例外回 FAILED（SQS 會保留訊息重試，webhook 仍回 200） */
     @Test
-    void complaintIsDispatchedEvenIfListenerFails() {
+    void listenerFailureIsReportedAsFailed() {
         String event = """
             {"eventType":"Complaint","complaint":{"complainedRecipients":[{"emailAddress":"c@example.com"}],
              "complaintFeedbackType":"abuse"},"mail":{"messageId":"m-2"}}
             """;
         when(verifier.verify("body")).thenReturn(notification(TOPIC, event));
-        SesComplaint expected = new SesComplaint(List.of("c@example.com"), "abuse", "m-2");
+        SesComplaint expected = new SesComplaint("m-2", List.of("c@example.com"), "abuse", "m-2");
         doThrow(new IllegalStateException("db down")).when(listener).onComplaint(expected);
 
-        assertEquals(SnsWebhookHandler.Result.NOTIFIED, handler.handle("body"));
+        assertEquals(SnsWebhookHandler.Result.FAILED, handler.handle("body"));
         verify(listener).onComplaint(expected);
     }
 
-    /** 送達等不處理的事件、取消訂閱確認：忽略 */
+    /** 送達通知：分派給 onDelivery */
+    @Test
+    void deliveryIsDispatched() {
+        String event = """
+            {"eventType":"Delivery","mail":{"messageId":"m-9"},"delivery":{"recipients":["d@example.com"]}}
+            """;
+        when(verifier.verify("body")).thenReturn(notification(TOPIC, event));
+
+        assertEquals(SnsWebhookHandler.Result.NOTIFIED, handler.handle("body"));
+        verify(listener).onDelivery(new SesDelivery("m-9", List.of("d@example.com"), "m-9"));
+    }
+
+    /** 解析時參照查詢失敗（資料庫斷線）：回 FAILED，交給 SQS 重試 */
+    @Test
+    void parseFailureIsReportedAsFailed() {
+        SnsWebhookHandler failing = new SnsWebhookHandler(verifier, Set.of(TOPIC), "ap-northeast-1", confirmer,
+            new SesEventParser(id -> { throw new IllegalStateException("db down"); }), () -> List.of(listener));
+        String event = """
+            {"eventType":"Delivery","mail":{"messageId":"m"},"delivery":{"recipients":["d@example.com"]}}
+            """;
+        when(verifier.verify("body")).thenReturn(notification(TOPIC, event));
+
+        assertEquals(SnsWebhookHandler.Result.FAILED, failing.handle("body"));
+    }
+
+    /** 開信等不處理的事件、取消訂閱確認：忽略 */
     @Test
     void otherMessagesAreIgnored() {
-        when(verifier.verify("delivery")).thenReturn(notification(TOPIC, "{\"eventType\":\"Delivery\"}"));
+        when(verifier.verify("delivery")).thenReturn(notification(TOPIC, "{\"eventType\":\"Open\"}"));
         assertEquals(SnsWebhookHandler.Result.IGNORED, handler.handle("delivery"));
 
         when(verifier.verify("unsub")).thenReturn(SnsUnsubscribeConfirmation.builder().topicArn(TOPIC)

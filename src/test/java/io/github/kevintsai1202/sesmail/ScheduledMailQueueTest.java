@@ -181,4 +181,20 @@ class ScheduledMailQueueTest {
         assertEquals(1, queue.countStuck(OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(1)));
         assertEquals(0, queue.countStuck(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(10)));
     }
+
+    /** 以 SES MessageId 反查呼叫端參照：批次信回整批參照、排程信回 ses-sched-{id}、查無回空 */
+    @Test
+    void findsRefByMessageId() {
+        queue.insertAll("ses-batch-z", List.of(new OutgoingMail("a@example.com", "s", "<p>a</p>")), NOW);
+        long batchRow = queue.findDueIds(NOW, 10).get(0);
+        queue.claim(batchRow);
+        queue.markSent(batchRow, "msg-batch");
+        long scheduled = enqueue("b@example.com", NOW);
+        queue.claim(scheduled);
+        queue.markSent(scheduled, "msg-sched");
+
+        assertEquals(java.util.Optional.of("ses-batch-z"), queue.findRefByMessageId("msg-batch"));
+        assertEquals(java.util.Optional.of("ses-sched-" + scheduled), queue.findRefByMessageId("msg-sched"));
+        assertEquals(java.util.Optional.empty(), queue.findRefByMessageId("msg-unknown"));
+    }
 }

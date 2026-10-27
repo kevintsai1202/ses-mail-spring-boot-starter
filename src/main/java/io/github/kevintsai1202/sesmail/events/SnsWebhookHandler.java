@@ -16,7 +16,8 @@ import java.util.function.Supplier;
  *
  * <ul>
  *   <li>訂閱確認：SubscribeURL 必須是該區域 SNS 主機（https），才去呼叫它完成訂閱。</li>
- *   <li>通知：解析 SES 事件，分派給所有 {@link SesEventListener}；listener 例外只記 log。</li>
+ *   <li>通知：解析 SES 事件，分派給所有 {@link SesEventListener}。解析或任一 listener 失敗回 {@code FAILED}：
+ *       SQS 模式據此保留訊息重試，webhook 模式仍回 200。</li>
  *   <li>取消訂閱確認與其他事件：忽略。</li>
  * </ul>
  */
@@ -28,8 +29,10 @@ public class SnsWebhookHandler {
     public enum Result {
         /** 訂閱已確認 */
         CONFIRMED,
-        /** 退信／檢舉已分派 */
+        /** 事件已分派 */
         NOTIFIED,
+        /** 解析或 listener 處理失敗：SQS 模式不刪除訊息、稍後重試 */
+        FAILED,
         /** 合法但不需處理 */
         IGNORED,
         /** 驗簽失敗、topic 不在白名單、SubscribeURL 可疑：回 403 */
@@ -99,23 +102,31 @@ public class SnsWebhookHandler {
         return Result.CONFIRMED;
     }
 
-    /** 通知：解析 SES 事件並分派 */
+    /** 通知：解析 SES 事件並分派；任何一步失敗回 FAILED（其他 listener 仍會被呼叫） */
     private Result dispatch(SnsNotification notification) {
-        SesEvent event = parser.parse(notification.message()).orElse(null);
+        SesEvent event;
+        try {
+            event = parser.parse(notification.message()).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("SES 事件解析失敗，稍後重試：{}", e.getMessage(), e);
+            return Result.FAILED;
+        }
         if (event == null) {
             return Result.IGNORED;
         }
+        boolean failed = false;
         for (SesEventListener listener : listeners.get()) {
             try {
-                if (event instanceof SesBounce bounce) {
-                    listener.onBounce(bounce);
-                } else if (event instanceof SesComplaint complaint) {
-                    listener.onComplaint(complaint);
+                switch (event) {
+                    case SesBounce bounce -> listener.onBounce(bounce);
+                    case SesComplaint complaint -> listener.onComplaint(complaint);
+                    case SesDelivery delivery -> listener.onDelivery(delivery);
                 }
             } catch (RuntimeException e) {
+                failed = true;
                 log.warn("SesEventListener {} 處理失敗：{}", listener.getClass().getName(), e.getMessage(), e);
             }
         }
-        return Result.NOTIFIED;
+        return failed ? Result.FAILED : Result.NOTIFIED;
     }
 }

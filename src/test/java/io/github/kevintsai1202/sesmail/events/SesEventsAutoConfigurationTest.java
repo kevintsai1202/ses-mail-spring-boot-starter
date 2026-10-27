@@ -61,4 +61,23 @@ class SesEventsAutoConfigurationTest {
                     .andExpect(status().isForbidden());
             });
     }
+
+    /** 只啟用 SQS：建立拉取器、不註冊 webhook 端點；沒設佇列網址時啟動失敗 */
+    @Test
+    void sqsModeCreatesPollerWithoutEndpoint() {
+        runner.withPropertyValues("sesmail.sqs.enabled=true",
+                "sesmail.sqs.queue-url=https://sqs.ap-northeast-1.amazonaws.com/123456789012/ses-events",
+                "sesmail.sqs.auto-start=false",
+                "sesmail.sns.topic-arns=arn:aws:sns:ap-northeast-1:123456789012:ses-events")
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasSingleBean(SqsEventPoller.class);
+                assertThat(context).hasSingleBean(SnsWebhookHandler.class);
+                assertThat(context).doesNotHaveBean(SnsWebhookController.class);
+            });
+        runner.withPropertyValues("sesmail.sqs.enabled=true",
+                "sesmail.sns.topic-arns=arn:aws:sns:ap-northeast-1:123456789012:ses-events")
+            .run(context -> assertThat(context.getStartupFailure()).rootCause()
+                .hasMessageContaining("sesmail.sqs.queue-url"));
+    }
 }

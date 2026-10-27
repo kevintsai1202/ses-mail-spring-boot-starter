@@ -7,12 +7,14 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** SesEventParser：把 SNS 通知裡的 SES 事件 JSON 轉成退信／檢舉事件 */
+/** SesEventParser：把 SNS 通知裡的 SES 事件 JSON 轉成退信／檢舉／送達事件，並把 MessageId 對回呼叫端參照 */
 class SesEventParserTest {
 
-    private final SesEventParser parser = new SesEventParser();
+    /** 參照解析器：查不到時沿用 MessageId（交易信的情況） */
+    private final SesEventParser parser = new SesEventParser(messageId -> messageId);
 
     /** configuration set 事件發佈格式（eventType）的永久退信 */
     @Test
@@ -34,6 +36,7 @@ class SesEventParserTest {
         assertEquals("General", bounce.bounceSubType());
         assertEquals(List.of("a@example.com", "b@example.com"), bounce.recipients());
         assertEquals("msg-1", bounce.messageId());
+        assertEquals("msg-1", bounce.ref());
     }
 
     /** 身分層級通知格式（notificationType）的暫時退信 */
@@ -69,13 +72,51 @@ class SesEventParserTest {
         assertEquals("msg-3", complaint.messageId());
     }
 
-    /** 送達、開信等其他事件：不處理 */
+    /** 送達：delivery.recipients 是字串陣列，不是 {emailAddress} 物件陣列（SES 實際格式） */
     @Test
-    void ignoresOtherEventTypes() {
-        assertTrue(parser.parse("{\"eventType\":\"Delivery\",\"mail\":{\"messageId\":\"m\"}}").isEmpty());
+    void parsesDeliveryWithStringRecipients() {
+        String json = """
+            {"eventType":"Delivery",
+             "mail":{"timestamp":"2026-10-27T10:00:00.000Z","messageId":"msg-4","destination":["d@example.com"]},
+             "delivery":{"timestamp":"2026-10-27T10:00:02.000Z","processingTimeMillis":2000,
+               "recipients":["d@example.com"],"smtpResponse":"250 2.0.0 OK","reportingMTA":"a8-1.smtp-out.amazonses.com"}}
+            """;
+
+        SesDelivery delivery = (SesDelivery) parser.parse(json).orElseThrow();
+
+        assertEquals(List.of("d@example.com"), delivery.recipients());
+        assertEquals("msg-4", delivery.messageId());
     }
 
-    /** 壞掉的 JSON：不拋例外，回空（不讓 SNS 一直重送一則永遠解析不了的訊息） */
+    /** 參照解析：佇列寄出的信，MessageId 會被對回 ses-batch-*／ses-sched-* */
+    @Test
+    void resolvesRefFromMessageId() {
+        SesEventParser resolving = new SesEventParser(id -> "msg-5".equals(id) ? "ses-batch-abc" : id);
+        String json = """
+            {"eventType":"Delivery","mail":{"messageId":"msg-5"},"delivery":{"recipients":["e@example.com"]}}
+            """;
+
+        assertEquals("ses-batch-abc", resolving.parse(json).orElseThrow().ref());
+    }
+
+    /** 參照解析失敗（例如資料庫斷線）必須往外拋，讓呼叫端保留訊息稍後重試 */
+    @Test
+    void resolverFailurePropagates() {
+        SesEventParser failing = new SesEventParser(id -> { throw new IllegalStateException("db down"); });
+        String json = """
+            {"eventType":"Delivery","mail":{"messageId":"m"},"delivery":{"recipients":["e@example.com"]}}
+            """;
+
+        assertThrows(IllegalStateException.class, () -> failing.parse(json));
+    }
+
+    /** 開信、點擊等其他事件：不處理 */
+    @Test
+    void ignoresOtherEventTypes() {
+        assertTrue(parser.parse("{\"eventType\":\"Open\",\"mail\":{\"messageId\":\"m\"}}").isEmpty());
+    }
+
+    /** 壞掉的 JSON：不拋例外，回空（不讓訊息一直重送一則永遠解析不了的內容） */
     @Test
     void malformedJsonIsIgnored() {
         assertTrue(parser.parse("not json").isEmpty());

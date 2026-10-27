@@ -144,6 +144,20 @@ public class ScheduledMailQueue {
                 """).params(error, id).update();
     }
 
+    /**
+     * 以 SES MessageId 反查呼叫端參照（批次信回整批參照、排程信回 ses-sched-{id}），查無回空。
+     * 退信、送達等事件只帶 MessageId，要靠這裡對回應用程式的寄送記錄；有 provider_message_id 索引。
+     */
+    public Optional<String> findRefByMessageId(String messageId) {
+        return jdbc.sql("SELECT id, batch_ref FROM scheduled_mail WHERE provider_message_id = ? LIMIT 1")
+            .param(messageId)
+            .query((rs, i) -> {
+                String batchRef = rs.getString("batch_ref");
+                return batchRef != null ? batchRef : QueuedMail.SCHEDULE_PREFIX + rs.getLong("id");
+            })
+            .optional();
+    }
+
     /** 還沒送出的封數（PENDING）；額度計算要扣掉，因為 SES 的已寄量還看不到它們 */
     public long countPending() {
         return jdbc.sql("SELECT count(*) FROM scheduled_mail WHERE status = 'PENDING'")
