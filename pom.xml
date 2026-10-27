@@ -7,7 +7,7 @@
   <!-- 座標與 JitPack 一致：com.github.<帳號>:<repo>:<tag> -->
   <groupId>com.github.kevintsai1202</groupId>
   <artifactId>ses-mail-spring-boot-starter</artifactId>
-  <version>0.1.1</version>
+  <version>0.2.0</version>
   <name>ses-mail-spring-boot-starter</name>
   <description>Amazon SES 寄信 Spring Boot starter：同步寄信、待寄佇列（排程／取消／批次）、額度查詢</description>
 
@@ -87,6 +87,42 @@
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>url-connection-client</artifactId>
+    </dependency>
+    <!-- SNS 訊息簽章驗證（退信／檢舉事件 webhook）；憑證下載改用上方的 URLConnection client -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sns-message-manager</artifactId>
+      <!-- 它帶入的 sns 模組會附 Apache／Netty runtime client，一律排除，只用 URLConnection -->
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>apache5-client</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>apache-client</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>netty-nio-client</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <!-- 解析 SES 事件 JSON -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!-- webhook 端點；只有 Servlet Web 應用程式才會註冊 -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-webmvc</artifactId>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.servlet</groupId>
+      <artifactId>jakarta.servlet-api</artifactId>
+      <scope>provided</scope>
     </dependency>
 
     <dependency>

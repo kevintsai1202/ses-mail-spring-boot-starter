@@ -1,1 +1,2 @@
 io.github.kevintsai1202.sesmail.SesMailAutoConfiguration
+io.github.kevintsai1202.sesmail.events.SesEventsAutoConfiguration

@@ -28,6 +28,29 @@ public class SesMailProperties {
     private Duration dispatchInterval = Duration.ofSeconds(10);
     /** 佇列設定 */
     private final Queue queue = new Queue();
+    /** 退信／檢舉事件 webhook 設定 */
+    private final Sns sns = new Sns();
+
+    /** 退信／檢舉事件（SNS HTTPS 訂閱）設定 */
+    public static class Sns {
+        /** 是否註冊 webhook；與 sesmail.enabled 互相獨立 */
+        private boolean enabled = false;
+        /** webhook 路徑 */
+        private String path = "/sesmail/sns";
+        /** 允許的 SNS topic ARN（必填）；其他 topic 的訊息一律拒絕 */
+        private java.util.List<String> topicArns = new java.util.ArrayList<>();
+        /** topic 所在區域；空白時沿用 sesmail.region */
+        private String region;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public java.util.List<String> getTopicArns() { return topicArns; }
+        public void setTopicArns(java.util.List<String> topicArns) { this.topicArns = topicArns; }
+        public String getRegion() { return region; }
+        public void setRegion(String region) { this.region = region; }
+    }
 
     /** 佇列相關設定 */
     public static class Queue {
@@ -57,4 +80,5 @@ public class SesMailProperties {
     public Duration getDispatchInterval() { return dispatchInterval; }
     public void setDispatchInterval(Duration dispatchInterval) { this.dispatchInterval = dispatchInterval; }
     public Queue getQueue() { return queue; }
+    public Sns getSns() { return sns; }
 }

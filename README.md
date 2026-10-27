@@ -21,7 +21,7 @@ Amazon SES starter for Spring Boot: synchronous transactional mail, a database-b
 <dependency>
   <groupId>com.github.kevintsai1202</groupId>
   <artifactId>ses-mail-spring-boot-starter</artifactId>
-  <version>0.1.1</version>
+  <version>0.2.0</version>
 </dependency>
 ```
 
@@ -83,6 +83,37 @@ class EmailLogUpdater implements DeliveryListener {
 ```
 
 額度：`SesQuotaService.snapshot()` 回傳狀態（`sandbox`／`paused`／`healthy`…）、24 小時上限、已寄、佇列待寄與 `remaining()`。每次呼叫都會打 SES API，請自行快取。
+
+## 退信／檢舉事件（0.2.0 起）
+
+SES 的退信與檢舉透過 SNS 以 HTTPS 推送到應用程式。啟用後會註冊 `POST /sesmail/sns`：
+
+```yaml
+sesmail:
+  sns:
+    enabled: true                     # 與 sesmail.enabled 互相獨立
+    path: /sesmail/sns
+    topic-arns: arn:aws:sns:ap-northeast-1:123456789012:ses-events   # 必填，其他 topic 一律拒絕
+    region: ""                        # 空白時沿用 sesmail.region
+```
+
+- 簽章用 AWS SDK 官方的 `SnsMessageManager` 驗證（憑證主機、主機名稱、有效期、簽章）；驗證失敗或 topic 不在白名單回 403，其餘回 200。
+- 訂閱確認只會去打該區域 `sns.<region>.amazonaws.com` 的 https 網址。
+- 宣告 `SesEventListener` bean 處理事件；SNS 可能重送，實作要冪等：
+
+```java
+@Component
+class Suppression implements SesEventListener {
+    @Override public void onBounce(SesBounce bounce) {
+        if (bounce.permanent()) bounce.recipients().forEach(this::unsubscribe);
+    }
+    @Override public void onComplaint(SesComplaint complaint) {
+        complaint.recipients().forEach(this::unsubscribe);
+    }
+}
+```
+
+AWS 端設定：建立 SNS topic → 建立 HTTPS 訂閱指向 webhook（**不要**開 raw message delivery）→ 在 SES configuration set 加事件目的地（Bounce、Complaint）指向該 topic，並設 `sesmail.configuration-set`；或在已驗證身分的「通知」頁直接把退信／檢舉送到該 topic。webhook 必須能從公網直接打到，不能被登入或 Host 白名單擋住。
 
 ## 派送規則
 
