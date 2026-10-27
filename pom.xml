@@ -11,6 +11,14 @@
   <name>ses-mail-spring-boot-starter</name>
   <description>Amazon SES 寄信 Spring Boot starter：同步寄信、待寄佇列（排程／取消／批次）、額度查詢</description>
 
+  <url>https://github.com/kevintsai1202/ses-mail-spring-boot-starter</url>
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+    </license>
+  </licenses>
+
   <properties>
     <java.version>21</java.version>
     <maven.compiler.release>21</maven.compiler.release>

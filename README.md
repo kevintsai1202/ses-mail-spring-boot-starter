@@ -104,3 +104,7 @@ psql $env:DATABASE_URL -c "UPDATE scheduled_mail SET status = 'PENDING', next_at
 $env:JAVA_HOME = 'D:\java\jdk-21'
 mvn -B test
 ```
+
+## 授權
+
+MIT License，見 [LICENSE](LICENSE)。
