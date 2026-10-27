@@ -38,6 +38,14 @@ class SesEventsAutoConfigurationTest {
                 .hasMessageContaining("sesmail.sns.topic-arns"));
     }
 
+    /** topic-arns 設成空字串（環境變數沒填）：同樣啟動失敗，不能默默拒絕所有訊息 */
+    @Test
+    void blankTopicFailsFast() {
+        runner.withPropertyValues("sesmail.sns.enabled=true", "sesmail.sns.topic-arns=")
+            .run(context -> assertThat(context.getStartupFailure()).rootCause()
+                .hasMessageContaining("sesmail.sns.topic-arns"));
+    }
+
     /** 啟用：建立 handler 與 controller；驗證失敗的請求回 403，通過的回 200 */
     @Test
     void endpointRespondsByHandlerResult() {
