@@ -1,0 +1,5 @@
+# JitPack 建置設定：Java 21，略過需要本機 PostgreSQL 的測試
+jdk:
+  - openjdk21
+install:
+  - mvn -B install -DskipTests
