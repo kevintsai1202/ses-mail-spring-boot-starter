@@ -7,7 +7,7 @@
   <!-- 座標與 JitPack 一致：com.github.<帳號>:<repo>:<tag> -->
   <groupId>com.github.kevintsai1202</groupId>
   <artifactId>ses-mail-spring-boot-starter</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <name>ses-mail-spring-boot-starter</name>
   <description>Amazon SES 寄信 Spring Boot starter：同步寄信、待寄佇列（排程／取消／批次）、額度查詢</description>
 

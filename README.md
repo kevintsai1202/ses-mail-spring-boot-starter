@@ -21,7 +21,7 @@ Amazon SES starter for Spring Boot: synchronous transactional mail, a database-b
 <dependency>
   <groupId>com.github.kevintsai1202</groupId>
   <artifactId>ses-mail-spring-boot-starter</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 

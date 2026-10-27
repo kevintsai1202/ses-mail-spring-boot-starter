@@ -1,5 +1,7 @@
-# JitPack 建置設定：Java 21，略過需要本機 PostgreSQL 的測試
+# JitPack 建置設定：Java 21；JitPack 內建的 Maven 太舊（跑不了 compiler plugin 3.13），改用 wrapper 的 3.9.9
+# 略過需要本機 PostgreSQL 的測試
 jdk:
   - openjdk21
 install:
-  - mvn -B install -DskipTests
+  - chmod +x ./mvnw
+  - ./mvnw -B install -DskipTests
