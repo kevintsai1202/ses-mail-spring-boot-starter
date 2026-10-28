@@ -1,0 +1,33 @@
+# ses-mail-spring-boot-starter 設定範本：合併進 src/main/resources/application.yml。
+# 每個值都對應一個環境變數；scripts/setup-ses.ps1 跑完會印出要設的值。
+sesmail:
+  # 預設 false：加了依賴也不會有任何作用，直到明確開啟
+  enabled: ${SESMAIL_ENABLED:false}
+  # 要與 SES 身分、SNS、SQS 所在區域一致
+  region: ${AWS_SES_REGION:ap-northeast-1}
+  # 兩把都空白時改用 AWS SDK 預設憑證鏈（環境變數、IAM role…）
+  access-key-id: ${AWS_SES_ACCESS_KEY_ID:}
+  secret-access-key: ${AWS_SES_SECRET_ACCESS_KEY:}
+  # 寄件人，網域要先在 SES 驗證；中文顯示名稱會自動編碼，例如「電子報 <noreply@example.com>」
+  from: ${SESMAIL_FROM:}
+  reply-to: ${SESMAIL_REPLY_TO:}
+  # 接收事件時才設；指向不存在的 configuration set 會讓寄信失敗
+  configuration-set: ${AWS_SES_CONFIGURATION_SET:}
+  # 每秒最多寄幾封，不要高於 SES 帳號的 Maximum send rate（沙箱為 1）
+  max-send-rate: ${SESMAIL_MAX_SEND_RATE:5}
+  # 派送器多久掃一次待寄佇列
+  dispatch-interval: ${SESMAIL_DISPATCH_INTERVAL:10s}
+  queue:
+    # 用 Flyway 管 schema 時保持 false，把 ses-mail-postgresql.sql 複製成下一個 migration；
+    # 沒用 Flyway 才設 true，啟動時以 IF NOT EXISTS 建表
+    initialize-schema: ${SESMAIL_INITIALIZE_SCHEMA:false}
+  # 退信／檢舉／送達事件：SES configuration set → SNS topic，接收方式二選一，兩個都開會收到重複事件
+  sns:
+    # webhook 模式：SNS 直接 POST 到 /sesmail/sns
+    enabled: ${SESMAIL_SNS_ENABLED:false}
+    # 允許的 topic ARN，多個以逗號分隔；開了任一種接收方式就必填
+    topic-arns: ${SESMAIL_SNS_TOPIC_ARNS:}
+  sqs:
+    # SQS 拉取模式（建議）：停機或處理失敗都會重試
+    enabled: ${SESMAIL_SQS_ENABLED:false}
+    queue-url: ${SESMAIL_SQS_QUEUE_URL:}

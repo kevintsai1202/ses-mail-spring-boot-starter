@@ -146,12 +146,68 @@ psql $env:DATABASE_URL -c "SELECT id, recipient, subject, updated_at FROM schedu
 psql $env:DATABASE_URL -c "UPDATE scheduled_mail SET status = 'PENDING', next_attempt_at = now(), updated_at = now() WHERE id = <id>;"
 ```
 
+## AI agent 技能：導入與 AWS 設定
+
+[`skills/ses-mail-setup/`](skills/ses-mail-setup/SKILL.md) 是導入用的 agent 技能，採用開放的 Agent Skills 格式（`SKILL.md`），Claude Code、Codex、Cursor、Gemini CLI、GitHub Copilot、OpenCode、Windsurf 等工具都能用。它會先問事件接收方式（SQS、webhook 或不接收），再依序帶你完成：加依賴與設定、在 AWS CloudShell 建立資源（網域驗證、configuration set、SNS、SQS 與死信佇列、IAM、信譽警報）、申請離開沙箱，以及上線後的維運。
+
+### 用 skills CLI 安裝（建議）
+
+需要 Node.js 22.20 以上。在專案根目錄執行：
+
+```powershell
+# 互動式：偵測已安裝的 agent，讓你選要裝給哪些
+npx skills add kevintsai1202/ses-mail-spring-boot-starter --skill ses-mail-setup
+
+# 指定 agent、不詢問（-a 可重複）
+npx skills add kevintsai1202/ses-mail-spring-boot-starter --skill ses-mail-setup -a codex -a cursor -y
+
+# 裝到使用者目錄，所有專案共用
+npx skills add kevintsai1202/ses-mail-spring-boot-starter --skill ses-mail-setup -g
+```
+
+常見工具的 `-a` 名稱與專案內的安裝位置（完整清單見 [skills CLI 的 agents 文件](https://github.com/vercel-labs/skills/blob/main/docs/agents.md)）：
+
+| 工具 | `-a` | 專案內位置 |
+| --- | --- | --- |
+| Claude Code | `claude-code` | `.claude/skills/` |
+| Codex、Cursor、Gemini CLI、GitHub Copilot、OpenCode | `codex`、`cursor`、`gemini-cli`、`github-copilot`、`opencode` | `.agents/skills/` |
+| Windsurf | `windsurf` | `.windsurf/skills/` |
+| Kiro CLI | `kiro-cli` | `.kiro/skills/` |
+
+### 手動安裝
+
+不想用 npx 時，把資料夾複製到工具讀取技能的目錄（多數工具是 `.agents/skills`，Claude Code 是 `.claude/skills`）：
+
+```powershell
+git clone --depth 1 https://github.com/kevintsai1202/ses-mail-spring-boot-starter "$env:TEMP\ses-mail-starter"
+$target = '.agents\skills'   # Claude Code 改成 '.claude\skills'
+New-Item -ItemType Directory -Force $target | Out-Null
+Copy-Item -Recurse "$env:TEMP\ses-mail-starter\skills\ses-mail-setup" $target
+```
+
+### 不支援技能的 agent
+
+印出一段提示詞，貼給 agent 照著做：
+
+```powershell
+npx skills use kevintsai1202/ses-mail-spring-boot-starter@ses-mail-setup
+```
+
+或照上面手動複製資料夾後，在專案的 `AGENTS.md` 加一行：
+
+```markdown
+導入 Amazon SES 寄信（ses-mail-spring-boot-starter）時，先讀 `.agents/skills/ses-mail-setup/SKILL.md`，照它的步驟做。
+```
+
 ## 開發
 
 ```powershell
 # 測試需要本機 PostgreSQL（預設 127.0.0.1:5433，postgres/password，可用 SESMAIL_TEST_DB_* 覆寫）
 $env:JAVA_HOME = 'D:\java\jdk-21'
 mvn -B test
+
+# skill 的 AWS 設定腳本：以 DryRun 與假的 aws 指令測試，不呼叫 AWS
+pwsh -NoProfile -File skills/tests/setup-ses.tests.ps1
 ```
 
 ## 授權
