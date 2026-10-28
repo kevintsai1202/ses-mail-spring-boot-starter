@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="用 Amazon SES 自建大量寄信伺服器的 Spring Boot starter：電子報、廣告信都能寄，事件可選 SQS 拉取或 webhook，每千封 $0.10。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="用 Amazon SES 自建大量寄信伺服器">
+<meta property="og:description" content="用 Amazon SES 自建大量寄信伺服器的 Spring Boot starter：電子報、廣告信都能寄，事件可選 SQS 拉取或 webhook，每千封 $0.10。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b6e77' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 2 11 13'/%3E%3Cpath d='M22 2 15 22l-4-9-9-4 20-7z'/%3E%3C/svg%3E">
+<style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<title>電子報寄信架構對照</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* 版面：深色 hero（價值主張＋收件端郵件標頭卡）→ 三個優點、兩個代價 → 技能安裝 → 架構圖與對照表 → 適合誰 → 收尾行動呼籲。
+   單欄 1080px，卡片格線在窄螢幕收成單欄；hero 與收尾帶在兩種主題都是深色。 */
+:root {
+  --bg: #f4f7f8;
+  --surface: #ffffff;
+  --surface-2: #eaf1f2;
+  --ink: #12202a;
+  --muted: #4f5f69;
+  --line: #d6dfe3;
+  --accent: #0b6e77;          /* 自建（SES）方案、主要行動 */
+  --accent-soft: #e0f0f1;
+  --vendor: #875811;          /* 託管服務方案 */
+  --vendor-soft: #f5ead9;
+  --caution: #a2451a;         /* 代價、要先知道的事 */
+  --caution-soft: #fbece4;
+  --app: #6a4fb0;             /* 元件圖：應用程式 */
+  --aws: #c2541a;             /* 元件圖：AWS 資源 */
+  --hero-bg: #0c1a21;
+  --hero-ink: #eaf3f5;
+  --hero-muted: #a3b7be;
+  --hero-line: rgba(234, 243, 245, .16);
+  --hero-glass: rgba(234, 243, 245, .06);
+  --hero-accent: #62d2da;
+  --hero-accent-ink: #062a2e;
+  --pass: #7ad9a2;
+  --shadow: 0 1px 2px rgba(18, 32, 42, .06), 0 8px 24px rgba(18, 32, 42, .06);
+  --font-sans: "IBM Plex Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --radius: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1418; --surface: #141e24; --surface-2: #19262d; --ink: #e4edf0; --muted: #9cadb5; --line: #263540;
+    --accent: #5cc6cf; --accent-soft: #12323a; --vendor: #e2b46b; --vendor-soft: #33281a;
+    --caution: #f0a074; --caution-soft: #3a2318; --app: #b7a4f0; --aws: #f0a46a;
+    --hero-bg: #071014; --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .28);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1418; --surface: #141e24; --surface-2: #19262d; --ink: #e4edf0; --muted: #9cadb5; --line: #263540;
+  --accent: #5cc6cf; --accent-soft: #12323a; --vendor: #e2b46b; --vendor-soft: #33281a;
+  --caution: #f0a074; --caution-soft: #3a2318; --app: #b7a4f0; --aws: #f0a46a;
+  --hero-bg: #071014; --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .28);
+  color-scheme: dark;
+}
+
+/* ---- 基礎 ---- */
+body { background: var(--bg); color: var(--ink); font-family: var(--font-sans); font-size: 16px; line-height: 1.7; }
+.wrap {
+  max-width: 1080px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { margin: 0; line-height: 1.3; text-wrap: balance; }
+h2 { font-size: 28px; font-weight: 700; letter-spacing: -.005em; }
+h3 { font-size: 18px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+code { font-family: var(--font-mono); font-size: .88em; }
+b { font-weight: 600; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* ---- hero ---- */
+.hero {
+  background: radial-gradient(900px 420px at 88% -12%, rgba(98, 210, 218, .20), transparent 62%), var(--hero-bg);
+  color: var(--hero-ink);
+}
+.hero-inner { padding-block: 56px 64px; display: grid; gap: 40px; align-items: center; }
+@media (min-width: 900px) { .hero-inner { grid-template-columns: 1.1fr .9fr; } }
+.hero-copy { display: grid; gap: 20px; min-width: 0; }
+.eyebrow { font-family: var(--font-mono); font-size: 13px; letter-spacing: .04em; color: var(--hero-accent); margin: 0; }
+.hero h1 { font-size: clamp(32px, 5.2vw, 50px); font-weight: 900; letter-spacing: -.01em; line-height: 1.2; }
+.hero h1 em { font-style: normal; color: var(--hero-accent); }
+.hero .lede { color: var(--hero-muted); font-size: 18px; max-width: 34em; }
+.price { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.price .num { font-family: var(--font-mono); font-size: 40px; font-weight: 600; color: var(--hero-ink); line-height: 1; }
+.price .unit { color: var(--hero-muted); font-size: 15px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 18px;
+  border-radius: 10px; font-weight: 600; font-size: 15px; text-decoration: none; cursor: pointer;
+  transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+}
+.btn svg.i { width: 18px; height: 18px; }
+.btn.primary { background: var(--hero-accent); color: var(--hero-accent-ink); border: 1px solid var(--hero-accent); }
+.btn.primary:hover { background: var(--hero-ink); border-color: var(--hero-ink); }
+.btn.ghost { color: var(--hero-ink); border: 1px solid var(--hero-line); background: transparent; }
+.btn.ghost:hover { border-color: var(--hero-accent); color: var(--hero-accent); }
+.hero :focus-visible, .end :focus-visible { outline-color: var(--hero-accent); }
+.jump { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+.jump a { color: var(--hero-muted); text-decoration: none; border-bottom: 1px solid transparent; transition: color .2s ease, border-color .2s ease; }
+.jump a:hover { color: var(--hero-ink); border-color: var(--hero-accent); }
+
+/* 收件端郵件標頭卡（唯一的玻璃質感元件） */
+.mailcard {
+  margin: 0; min-width: 0; border-radius: 14px; overflow: hidden;
+  background: var(--hero-glass); border: 1px solid var(--hero-line);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.mailcard-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--hero-line); }
+.mailcard-bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--hero-line); }
+.mailcard-bar .t { margin-left: 8px; font-size: 13px; color: var(--hero-muted); }
+.hdr { margin: 0; padding: 14px 16px 6px; display: grid; gap: 8px; font-size: 14px; }
+.hdr div { display: grid; grid-template-columns: 9.5em 1fr; gap: 4px 12px; min-width: 0; }
+.hdr dt { font-family: var(--font-mono); font-size: 12.5px; color: var(--hero-muted); padding-top: 1px; }
+.hdr dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 13px; }
+.hdr dd.subj { font-family: var(--font-sans); font-size: 15px; font-weight: 600; }
+.hdr .pass { color: var(--pass); white-space: nowrap; }
+@media (max-width: 480px) { .hdr div { grid-template-columns: 1fr; } }
+.events { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px 16px; border-top: 1px dashed var(--hero-line); margin-top: 8px; }
+.events .lbl { width: 100%; font-size: 12.5px; color: var(--hero-muted); }
+.chip { font-family: var(--font-mono); font-size: 12.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--hero-line); }
+.chip.ok { color: var(--pass); }
+.chip.warn { color: #f3b38a; }
+.chip.route { color: var(--hero-accent-ink); background: var(--hero-accent); border-color: var(--hero-accent); }
+.events .arrow { color: var(--hero-muted); }
+.events .route-group { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.events .or { font-size: 13px; color: var(--hero-muted); }
+
+/* ---- 主內容 ---- */
+main.wrap { padding-block: 64px 72px; display: grid; gap: 72px; }
+section { display: grid; gap: 18px; min-width: 0; scroll-margin-top: 16px; }
+.sec-head { display: grid; gap: 6px; }
+.kicker { font-family: var(--font-mono); font-size: 13px; letter-spacing: .06em; color: var(--accent); }
+.sec-head p.sub { color: var(--muted); font-size: 17px; }
+.lede { color: var(--muted); font-size: 17px; }
+
+.grid3, .grid2 { display: grid; gap: 16px; }
+@media (min-width: 760px) { .grid3 { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 640px) { .grid2 { grid-template-columns: repeat(2, 1fr); } }
+
+/* 優點卡：有陰影，是頁面上主要的「物件」 */
+.feature {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 22px; display: grid; gap: 10px; align-content: start; min-width: 0;
+}
+.ico { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.feature p { color: var(--muted); font-size: 15.5px; }
+.feature p b { color: var(--ink); }
+.fine { font-size: 14px; color: var(--muted); }
+.feature .fine { border-top: 1px solid var(--line); padding-top: 10px; }
+
+/* 代價：不用陰影，左側圖示＋淡色底 */
+.tradeoff {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: start;
+  background: var(--caution-soft); border-radius: var(--radius); padding: 20px 22px; min-width: 0;
+}
+.tradeoff .ico { background: var(--surface); color: var(--caution); grid-row: span 2; }
+.tradeoff h3 { color: var(--ink); }
+.tradeoff p { color: var(--ink); opacity: .86; font-size: 15.5px; }
+
+/* 技能 */
+.skill {
+  background: var(--surface-2); border-radius: 16px; padding: 28px; gap: 24px;
+}
+@media (min-width: 900px) { .skill { grid-template-columns: 1fr 1fr; align-items: start; } }
+@media (max-width: 480px) { .skill { padding: 20px 16px; } }
+.skill-copy { display: grid; gap: 14px; min-width: 0; }
+.skill-copy > p { color: var(--muted); }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 10px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; font-size: 15.5px; color: var(--muted); }
+.steps li::before {
+  content: counter(s); display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent); color: var(--surface); font-family: var(--font-mono); font-size: 14px; font-weight: 600;
+}
+.steps li b { color: var(--ink); }
+.install { display: grid; gap: 10px; min-width: 0; }
+.term { background: var(--hero-bg); color: var(--hero-ink); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--hero-line); font-size: 13px; color: var(--hero-muted); }
+.copy {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+  font: 600 13px var(--font-sans); color: var(--hero-ink); background: var(--hero-glass); border: 1px solid var(--hero-line);
+  transition: border-color .2s ease, color .2s ease; white-space: nowrap; flex: none;
+}
+.term-bar > span { min-width: 0; }
+.copy svg.i { width: 16px; height: 16px; }
+.copy:hover { border-color: var(--hero-accent); color: var(--hero-accent); }
+.copy:focus-visible { outline-color: var(--hero-accent); }
+.term pre { margin: 0; padding: 14px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.65; }
+.copy-status { min-height: 1.4em; font-size: 13px; color: var(--accent); }
+.points-inline { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; font-size: 14.5px; color: var(--muted); }
+
+/* ---- 原有的對照內容 ---- */
+h2.tagged { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tag { font-size: 12px; font-weight: 700; letter-spacing: .06em; padding: 2px 10px; border-radius: 999px; }
+.tag.vendor { background: var(--vendor-soft); color: var(--vendor); }
+.tag.self { background: var(--accent-soft); color: var(--accent); }
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; overflow-x: auto; }
+.diagram.vendor { border-top: 4px solid var(--vendor); }
+.diagram.self { border-top: 4px solid var(--accent); }
+.diagram img.flow { display: block; width: 100%; height: auto; max-width: 100%; border-radius: 6px; }
+.diagram:has(img.flow) { padding: 8px; overflow: hidden; }
+.points { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; color: var(--muted); max-width: 72ch; }
+.points b { color: var(--ink); }
+.points ul { margin: 4px 0 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.arch { display: grid; gap: 28px; }
+.arch-item { display: grid; gap: 14px; min-width: 0; }
+
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 15px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font-size: 13px; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface-2); }
+tbody tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 500; white-space: nowrap; }
+table.map td:first-child { color: var(--muted); }
+table.map td:nth-child(2) { color: var(--vendor); }
+table.map td:nth-child(3) { color: var(--accent); }
+table.map td.weak { color: var(--muted); }
+table.map tr.hl td { background: var(--accent-soft); }
+table.map tr.hl td.weak { background: transparent; }
+table.map b { color: var(--ink); }
+/* 比較表：自建欄整欄淡色標示 */
+table.compare th:last-child, table.compare td:last-child { background: var(--accent-soft); }
+table.compare thead th:last-child { color: var(--accent); }
+.who { display: inline-block; font-size: 13px; font-weight: 600; padding: 1px 8px; border-radius: 6px; }
+.who.v { background: var(--vendor-soft); color: var(--vendor); }
+.who.s { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); }
+.who.n { color: var(--muted); border: 1px dashed var(--line); }
+
+.roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 14px; }
+.role { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); padding: 16px 18px; display: grid; gap: 6px; min-width: 0; align-content: start; }
+.role.vendor { border-left-color: var(--vendor); }
+.role p { color: var(--muted); font-size: 15px; }
+.role b { color: var(--ink); }
+.role .points { font-size: 15px; }
+
+/* 元件細節：收在可展開區塊 */
+details.more { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+details.more > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 52px; padding: 12px 18px; font-weight: 700;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary .hint { font-weight: 400; font-size: 14px; color: var(--muted); }
+details.more > summary svg.i { transition: transform .2s ease; color: var(--muted); }
+details.more[open] > summary svg.i { transform: rotate(180deg); }
+details.more > .more-body { padding: 0 18px 18px; display: grid; gap: 14px; }
+.flowmap { display: grid; gap: 16px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--own); }
+.sw.app, .node.app { --own: var(--app); }
+.sw.st, .node.st { --own: var(--accent); }
+.sw.aws, .node.aws { --own: var(--aws); }
+.lane { display: grid; gap: 10px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; min-width: 0; overflow-x: auto; }
+.lane-title { font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; }
+.node { display: grid; padding: 6px 10px; border-radius: 6px; font-size: 14px; line-height: 1.35; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--own, var(--line)); }
+.node small { font-size: 12px; color: var(--muted); }
+.node code { font-size: 13px; }
+.arr { display: inline-grid; justify-items: center; color: var(--muted); font-size: 12px; line-height: 1.2; padding: 0 2px; }
+.arr::after { content: "→"; font-size: 18px; line-height: 1; }
+.arr span { white-space: nowrap; }
+.branch { display: grid; gap: 8px; margin-left: 12px; padding-left: 14px; border-left: 2px solid var(--line); }
+.cond { font-size: 12px; font-weight: 600; color: var(--ink); background: var(--bg); border: 1px solid var(--line); padding: 2px 8px; border-radius: 999px; }
+
+/* 適合誰：要自己管理的項目 */
+.status { display: grid; gap: 6px; padding: 16px 18px; border-radius: var(--radius); background: var(--caution-soft); color: var(--ink); font-size: 15.5px; }
+.ops { display: grid; gap: 14px; }
+@media (min-width: 900px) { .ops { grid-template-columns: repeat(3, 1fr); } }
+.check { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.check li { position: relative; padding-left: 22px; color: var(--muted); font-size: 15px; }
+.check li::before { content: ""; position: absolute; left: 2px; top: .55em; width: 9px; height: 9px; border-radius: 2px; border: 2px solid var(--accent); }
+.check li b { color: var(--ink); }
+
+/* ---- 收尾 ---- */
+.end { background: var(--hero-bg); color: var(--hero-ink); }
+.end-inner { padding-block: 48px; display: grid; gap: 18px; }
+@media (min-width: 900px) { .end-inner { grid-template-columns: 1fr auto; align-items: center; } }
+.end h2 { font-size: 26px; }
+.end p { color: var(--hero-muted); }
+.end .fine { color: var(--hero-muted); font-size: 13px; grid-column: 1 / -1; border-top: 1px solid var(--hero-line); padding-top: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+
+<!-- 圖示：線條風格，stroke 跟隨文字顏色 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 7.5v9"/><path d="M8.3 6.2C12 7 15.5 8.5 16.2 10.3"/><path d="M8.3 17.8C12 17 15.5 15.5 16.2 13.7"/></symbol>
+  <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 9.4c-.5-.9-1.6-1.4-3-1.4-1.7 0-3 .8-3 2.1 0 3 6 1.6 6 4.6 0 1.3-1.3 2.2-3 2.2-1.4 0-2.6-.6-3.1-1.5"/><path d="M12 6v12"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5"/><path d="M12 19h8"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+</svg>
+
+<header class="hero">
+  <div class="wrap hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow">ses-mail-spring-boot-starter · 開源 · MIT</p>
+      <h1>用 Amazon SES，<br>自建<em>大量寄信</em>伺服器</h1>
+      <p class="lede">一個 Spring Boot starter：把佇列、排程、重試和退信事件放進你自己的程式，SES 只負責把信送出去。電子報、廣告信都能寄。</p>
+      <div class="price"><span class="num">$0.10</span><span class="unit">每千封，主機另計</span></div>
+      <div class="actions">
+        <a class="btn primary" href="#skill"><svg class="i" aria-hidden="true"><use href="#i-term"/></svg>用 AI agent 技能導入</a>
+        <a class="btn ghost" href="https://github.com/kevintsai1202/ses-mail-spring-boot-starter" target="_blank" rel="noopener">GitHub 原始碼<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg></a>
+      </div>
+      <nav class="jump" aria-label="本頁段落">
+        <a href="#why">三個優點</a><a href="#tradeoffs">兩個代價</a><a href="#skill">導入技能</a><a href="#arch">架構對照</a><a href="#events">事件接收</a><a href="#compare">誰負責什麼</a>
+      </nav>
+    </div>
+
+    <figure class="mailcard" aria-label="範例：讀者信箱收到的電子報標頭（節錄）">
+      <div class="mailcard-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">讀者信箱看到的標頭（節錄）</span></div>
+      <dl class="hdr">
+        <div><dt>From</dt><dd>電子報 &lt;news@example.com&gt;</dd></div>
+        <div><dt>To</dt><dd>reader@example.com</dd></div>
+        <div><dt>Subject</dt><dd class="subj">第 42 期：本週精選</dd></div>
+        <div><dt>Return-Path</dt><dd>&lt;…@mail.example.com&gt;</dd></div>
+        <div><dt>Authentication</dt><dd><span class="pass">spf=pass</span> <span class="pass">dkim=pass</span> <span class="pass">dmarc=pass</span></dd></div>
+      </dl>
+      <div class="events">
+        <span class="lbl">寄出之後，SES 回報的事件</span>
+        <span class="chip ok">Delivery</span><span class="chip warn">Bounce</span><span class="chip warn">Complaint</span>
+        <span class="route-group"><span class="arrow" aria-hidden="true">→</span>
+        <span class="chip route">SQS 拉取</span><span class="or">或</span><span class="chip route">Webhook</span></span>
+      </div>
+    </figure>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="why" aria-labelledby="why-h">
+    <div class="sec-head">
+      <p class="kicker">為什麼自建</p>
+      <h2 id="why-h">三個優點</h2>
+    </div>
+    <div class="grid3">
+      <article class="feature">
+        <span class="ico"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></span>
+        <h3>自建大量寄信伺服器</h3>
+        <p>電子報、廣告信都能寄。群發整批寫入佇列，派送器依速率送出，可以排程、可以取消；重試和額度計算都在自己的程式裡，<b>可測、可查、可換服務商</b>。</p>
+        <p class="fine">廣告信要收件人事先同意、每封附退訂連結；SES 審核生產存取權時也會看這兩點。</p>
+      </article>
+      <article class="feature">
+        <span class="ico"><svg class="i" aria-hidden="true"><use href="#i-route"/></svg></span>
+        <h3>事件接收自己選</h3>
+        <p>退信、檢舉、送達事件可以用 <b>SQS 拉取</b>：停機、重新部署都不漏，處理失敗會重試，最後進死信佇列。也可以用 <b>webhook</b> 讓 SNS 直接推，少建一個佇列。換方式只改設定，事件處理程式不用動。</p>
+      </article>
+      <article class="feature">
+        <span class="ico"><svg class="i" aria-hidden="true"><use href="#i-coin"/></svg></span>
+        <h3>價格便宜</h3>
+        <p>SES 每千封 <b>$0.10</b>，每月寄 5 萬封約 $5。託管型服務的 Pro 方案是 $19～20／月，入門方案每天只能寄 100 封，連一期 310 人的電子報都寄不完。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="tradeoffs" aria-labelledby="tradeoffs-h">
+    <div class="sec-head">
+      <p class="kicker">代價</p>
+      <h2 id="tradeoffs-h">選之前要先知道的兩件事</h2>
+    </div>
+    <div class="grid2">
+      <article class="tradeoff">
+        <span class="ico"><svg class="i" aria-hidden="true"><use href="#i-server"/></svg></span>
+        <h3>要自己維護伺服器</h3>
+        <p>派送器跑在你的 Spring Boot 程式裡，程式要一直在線，停機期間排程信不會寄出。待寄佇列存在你的 PostgreSQL，AWS 的網域驗證、IAM、SNS、SQS 也要自己顧。</p>
+      </article>
+      <article class="tradeoff">
+        <span class="ico"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg></span>
+        <h3>一天超過 200 封要先申請</h3>
+        <p>SES 新帳號在沙箱裡：每天最多 200 封、每秒 1 封，而且只能寄給驗證過的信箱。要正式寄送得申請生產存取權，AWS 會審核用途，通過後通常是每天 5 萬封。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="skill" class="skill" aria-labelledby="skill-h">
+    <div class="skill-copy">
+      <p class="kicker">AI agent 技能</p>
+      <h2 id="skill-h">開發與設定都寫成技能</h2>
+      <p><code>ses-mail-setup</code> 把導入步驟寫成 AI agent 照著做的流程，採用開放的 Agent Skills 格式，Claude Code、Codex、Cursor、Gemini CLI、GitHub Copilot 等工具都能用。開工前會先問你：事件要用 SQS 拉取、webhook，還是不接收。接著依序帶你完成：</p>
+      <ol class="steps">
+        <li><span><b>整合 starter</b>：加依賴、套用 yaml 範本、建表、寫寄信與事件 Listener。</span></li>
+        <li><span><b>建立 AWS 資源</b>：在 CloudShell 執行腳本，先用 <code>-DryRun</code> 預覽。網域驗證、configuration set、SNS、SQS、IAM、信譽警報一次建好，可以重複執行。</span></li>
+        <li><span><b>申請離開沙箱</b>：附用途說明範本，審核結果用腳本就能查。</span></li>
+        <li><span><b>上線維運</b>：死信佇列、卡在 SENDING 的信、停用或換接收方式。</span></li>
+      </ol>
+    </div>
+    <div class="install">
+      <div class="term">
+        <div class="term-bar">
+          <span>在你的專案根目錄執行</span>
+          <button type="button" class="copy" id="copy-install" aria-describedby="copy-status"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>複製</button>
+        </div>
+<pre id="install-cmd"><code>npx skills add kevintsai1202/ses-mail-spring-boot-starter --skill ses-mail-setup</code></pre>
+      </div>
+      <p class="copy-status" id="copy-status" aria-live="polite"></p>
+      <ul class="points-inline">
+        <li>會偵測你裝了哪些 agent 讓你選；要指定就加 <code>-a codex</code>、<code>-a cursor</code>、<code>-a claude-code</code>，需要 Node.js 22.20 以上。</li>
+        <li>不用 npx 也行：把 <code>skills/ses-mail-setup</code> 資料夾複製到工具的技能目錄，多數工具是 <code>.agents/skills/</code>，Claude Code 是 <code>.claude/skills/</code>。</li>
+        <li>不支援技能的 agent：執行 <code>npx skills use kevintsai1202/ses-mail-spring-boot-starter@ses-mail-setup</code> 印出提示詞，貼給它照做。</li>
+        <li>建資源的腳本在 AWS CloudShell 執行；存取金鑰的 secret 不經過對話，由你直接貼到部署平台。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="arch" aria-labelledby="arch-h">
+    <div class="sec-head">
+      <p class="kicker">架構對照</p>
+      <h2 id="arch-h">託管型和自建型，差在哪裡</h2>
+      <p class="sub">託管型寄信服務（ZSend、Resend）把佇列、排程、重試和事件都放在服務商那端；自建型把這些搬進 starter，SES 只負責投遞。</p>
+    </div>
+    <div class="arch">
+      <div class="arch-item">
+        <h3 class="tagged-h"><span class="tag vendor">服務商負責</span>&nbsp; 託管型：ZSend、Resend</h3>
+        <div class="diagram vendor">
+<img class="flow" src="img/flow-managed.webp" width="2016" height="1152" loading="lazy" alt="託管型流程：你的程式呼叫服務商 API，服務商的佇列與排程負責投遞到讀者信箱；退信、送達事件由服務商用 webhook 通知，要自己寫接收端點。">
+        </div>
+        <ul class="points">
+          <li><b>程式最少</b>：呼叫 API 就好，批次、排程、取消都由服務商做。</li>
+          <li><b>看不到內部</b>：信卡在哪、重試幾次、為何失敗，只能看服務商給什麼。</li>
+          <li><b>受方案額度限制</b>：兩家的入門方案都是每天 100 封，要升級才拿掉每日上限。
+            <ul>
+              <li>ZSend：額度綁在 Zeabur 主機訂閱裡，Free 方案不能用。Dev 方案 $5／月，每天 100 封、每月 3,000 封；Pro 方案 $19／月，每月 5 萬封、不限每日，超額每千封 $0.90。</li>
+              <li>Resend：免費每天 100 封、每月 3,000 封；Pro $20／月，每月 5 萬封。</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <div class="arch-item">
+        <h3><span class="tag self">自己負責</span>&nbsp; 自建型：Amazon SES ＋ ses-mail-spring-boot-starter</h3>
+        <div class="diagram self">
+<img class="flow" src="img/flow-self.webp" width="2016" height="1152" loading="lazy" alt="自建型流程（SQS 可自選）：程式裡的 starter 寄信入口與待寄佇列、派送器把信交給 Amazon SES 投遞到讀者信箱；SES 的事件交給 SNS，方式 A 存進 SQS 由程式定時來拉，方式 B 由 SNS 直接推給事件接收器（webhook）；之後自動退訂、記錄送達。SQS 失敗 5 次的事件進死信佇列。">
+        </div>
+        <ul class="points">
+          <li><b>費用最低</b>：每千封 $0.10，我們的用量每月約 $0.3。</li>
+          <li><b>行為都在自己手上</b>：佇列、排程、取消、重試、額度計算都是自己的程式，可測、可查、可換服務商。</li>
+          <li><b>代價是 AWS 營運</b>：網域驗證、離開沙箱審核、IAM、SNS、警報都要自己顧；選 SQS 再多一個佇列。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="map-h">
+    <div class="sec-head">
+      <p class="kicker">逐項對照</p>
+      <h2 id="map-h">同一個功能，各由誰做</h2>
+    </div>
+    <div class="table-wrap">
+      <table class="map">
+        <thead>
+          <tr><th>功能</th><th>託管型：ZSend／Resend</th><th>自建型：Amazon SES＋starter</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>接收寄信</td><td>服務商 API</td><td>starter 寄信入口（<code>SesMailClient</code>）</td></tr>
+          <tr class="hl"><td>排程與重試</td><td>服務商的排程器：帶上寄送時間，時間到由它寄</td><td><b>自己跑排程</b>：待寄佇列（<code>scheduled_mail</code>）＋派送器每 10 秒掃一次；程式要在線</td></tr>
+          <tr><td>投遞</td><td>服務商投遞</td><td>Amazon SES</td></tr>
+          <tr class="hl"><td>退信、送達通知</td><td class="weak">兩家都用 webhook：服務商把事件 POST 到你寫的接收端點</td><td><b>SNS</b>：SES 把事件交給 SNS，由 SNS 轉發出去</td></tr>
+          <tr class="hl"><td>事件暫存（自建可選）</td><td class="weak">沒有佇列，只靠服務商重送。ZSend 在 1、2、4 秒後重試 3 次就丟棄，程式重新部署的空檔就會漏；Resend 約 1 天內重試 7 次，還能手動重播</td><td><b>SQS（可選）</b>：事件先存在佇列，程式來拉；處理失敗會重試，5 次仍失敗進死信佇列。不用 SQS 時，SNS 直接推給 starter 的接收器</td></tr>
+          <tr><td>處理事件</td><td class="weak">自己寫</td><td>自動退訂（永久退信、檢舉）、記錄送達時間</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="roles">
+      <div class="role">
+        <h3>SNS 做什麼</h3>
+        <p>SES 只會把事件丟到 SNS topic。SNS 負責<b>轉發</b>：可以直接 POST 到你的服務（webhook），也可以送進 SQS 佇列，日後還能再加 email 通知。它不負責保存，推給你的服務失敗時只重試約 1 分鐘，之後就沒了。</p>
+      </div>
+      <div class="role">
+        <h3>SQS 做什麼（可選）</h3>
+        <p>SQS 負責<b>保管</b>：事件放進佇列後，由我們的程式定時來拉。部署、重啟或資料庫出錯時事件留在佇列裡，程式恢復後再處理；一直處理不了的會移到死信佇列，方便事後查。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="events" aria-labelledby="events-h">
+    <div class="sec-head">
+      <p class="kicker">事件接收</p>
+      <h2 id="events-h">SQS 要不要，自己選</h2>
+      <p class="sub">兩種方式共用 starter 同一套驗簽、topic 白名單與事件處理，你只寫一次 <code>SesEventListener</code>。差別只在事件怎麼進到程式，用設定開關切換，只開一個。</p>
+    </div>
+    <div class="roles">
+      <div class="role">
+        <h3>方式 A：加 SQS，程式主動拉</h3>
+        <p><code>sesmail.sqs.enabled=true</code>。SNS → SQS 佇列 → starter 每次長輪詢 20 秒，有事件就立刻回來處理。<b>停機、重新部署、資料庫出錯都不漏</b>，處理失敗會重送，5 次仍失敗進死信佇列。不用對外開端點。</p>
+      </div>
+      <div class="role vendor">
+        <h3>方式 B：不用 SQS，SNS 直接推</h3>
+        <p><code>sesmail.sns.enabled=true</code>。SNS 直接 POST 到 starter 內建的接收器 <code>/sesmail/sns</code>，訂閱確認、驗簽都自動處理。<b>少建一個佇列</b>，但服務停機時 SNS 只重試約 1 分鐘，處理失敗也不會重送。</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th></th><th>方式 A：SQS 拉取</th><th>方式 B：webhook</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>要建的 AWS 資源</td><td>SNS topic、SQS 佇列、死信佇列、IAM 讀佇列權限</td><td>SNS topic、HTTPS 訂閱</td></tr>
+          <tr><td>對外端點</td><td>不用</td><td>要，公開 HTTPS 網址</td></tr>
+          <tr><td>服務停機時</td><td>事件留在佇列，預設保存 4 天</td><td>SNS 重試約 1 分鐘後丟棄</td></tr>
+          <tr><td>處理失敗時</td><td>SQS 重送，5 次後進死信佇列</td><td>只記 log</td></tr>
+          <tr><td>適合</td><td>正式電子報，退訂不能漏</td><td>寄量小、先求簡單，之後再加 SQS</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="sched-h">
+    <div class="sec-head">
+      <p class="kicker">排程</p>
+      <h2 id="sched-h">時間到了誰來寄</h2>
+      <p class="sub">兩種做法差最多的就是這裡。託管服務自己有排程器；SES 只會「現在寄」，排程得由我們的程式自己跑。</p>
+    </div>
+    <div class="roles">
+      <div class="role vendor">
+        <h3>託管型：交給服務商的排程器</h3>
+        <p>呼叫排程 API 時帶上寄送時間（ZSend 的 <code>/emails/schedule</code>、Resend 的 <code>scheduled_at</code>），服務商存起來，時間到由它寄出；取消也是呼叫 API。<b>寄送當下我們的程式停機也沒關係。</b></p>
+      </div>
+      <div class="role">
+        <h3>自建型：starter 的派送器自己跑</h3>
+        <p>排程信先寫進 <code>scheduled_mail</code>，附上寄送時間。程式裡的派送器每 10 秒掃一次，撈出到期的信（一輪最多 200 封），逐封認領後依速率交給 SES。<b>程式沒在跑，信就不會寄出。</b></p>
+      </div>
+    </div>
+    <ul class="points">
+      <li><b>程式要在線</b>：重新部署或停機期間不會寄；恢復後會補寄已過時間的信，晚到但不遺失。</li>
+      <li><b>準時程度</b>：最多晚一個掃描間隔（10 秒，可用 <code>sesmail.dispatch-interval</code> 調整），再加上限速排隊。每秒 5 封時，310 封約 1 分鐘寄完。</li>
+      <li><b>取消不會跟派送打架</b>：認領和取消都是條件式更新，已被認領的信取消不了，已取消的信不會被寄出。</li>
+      <li><b>重試與卡住</b>：暫時性錯誤從 30 秒起倍增退避，最多 5 次。程式在送信途中當掉時，已認領的信會停在處理中；超過 10 分鐘會記警告，交由人工確認，不自動重寄，以免讀者收到兩封。</li>
+    </ul>
+  </section>
+
+  <section id="compare" aria-labelledby="compare-h">
+    <div class="sec-head">
+      <p class="kicker">責任與費用</p>
+      <h2 id="compare-h">誰負責什麼</h2>
+    </div>
+    <div class="table-wrap">
+      <table class="compare">
+        <thead>
+          <tr><th>工作</th><th>ZSend</th><th>Resend</th><th>SES ＋ starter</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>批次群發</td><td><span class="who v">服務商</span></td><td><span class="who v">服務商</span></td><td><span class="who s">自建佇列</span> 單一 INSERT，全有或全無</td></tr>
+          <tr><td>排程、取消</td><td><span class="who v">服務商</span></td><td><span class="who v">服務商</span></td><td><span class="who s">自建派送器</span> 每 10 秒掃一次，程式停機就不寄；派送與取消不會互相蓋掉</td></tr>
+          <tr><td>速率控制、重試</td><td><span class="who v">服務商</span></td><td><span class="who v">服務商</span></td><td><span class="who s">自建派送器</span> 30 秒起倍增退避，最多 5 次</td></tr>
+          <tr><td>額度查詢</td><td><span class="who v">Zeabur GraphQL</span></td><td><span class="who n">無專用 API</span></td><td><span class="who s">SES GetAccount</span> 再扣佇列待寄</td></tr>
+          <tr><td>退信、檢舉</td><td><span class="who v">webhook</span> 重試 3 次（約 7 秒內）</td><td><span class="who v">webhook</span> 重試 7 次（約 1 天內）</td><td><span class="who s">SNS → SQS 或 webhook</span> 自選；自動退訂，SQS 模式失敗會重試</td></tr>
+          <tr><td>送達狀態</td><td><span class="who v">webhook</span></td><td><span class="who v">webhook</span></td><td><span class="who s">delivered_at</span> 後台顯示「已送達」</td></tr>
+          <tr><td>停寄名單</td><td><span class="who n">不明</span></td><td><span class="who v">服務商</span></td><td><span class="who v">SES 帳號層級</span></td></tr>
+          <tr><td>信譽監控</td><td><span class="who n">不明</span></td><td><span class="who v">儀表板</span></td><td><span class="who s">CloudWatch 警報</span> 退信率 &gt; 2%、檢舉率 &gt; 0.05%</td></tr>
+          <tr><td>入門方案</td><td>Zeabur Free 方案不能用；Dev 方案 $5／月，每天 100 封、每月 3,000 封</td><td>免費，每天 100 封、每月 3,000 封</td><td>沙箱：每天 200 封、每秒 1 封，只能寄給已驗證信箱。申請生產存取權通過後，通常提高到每天 5 萬封（依用途審核而定）；寄送紀錄良好時可再申請調高，或由 AWS 自動調高</td></tr>
+          <tr><td>升級方案</td><td>Pro 方案 $19／月，每月 5 萬封、不限每日；超額每千封 $0.90</td><td>Pro $20／月，每月 5 萬封</td><td>每千封 $0.10，我們的用量約 $0.3／月</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 元件圖：三條路徑（寄信、事件、額度），方塊顏色代表歸屬；預設收合 -->
+    <details class="more">
+      <summary><span>實際導入範例：自建型元件細節 <span class="hint">每個方塊對應到哪個類別、哪個 AWS 資源</span></span><svg class="i" aria-hidden="true"><use href="#i-down"/></svg></summary>
+      <div class="more-body">
+        <div class="flowmap">
+          <div class="legend">
+            <span><i class="sw app"></i>應用程式（Zeabur）</span>
+            <span><i class="sw st"></i>ses-mail-spring-boot-starter</span>
+            <span><i class="sw aws"></i>AWS（東京區）</span>
+          </div>
+
+          <div class="lane">
+            <div class="lane-title">① 寄信</div>
+            <div class="chain">
+              <div class="node app">群發、邀請、登入信</div>
+              <div class="arr"></div>
+              <div class="node app"><code>MailSender</code><small>寄信介面，切換 SES／ZSend</small></div>
+              <div class="arr"></div>
+              <div class="node app"><code>SesMailSender</code><small>轉接到 starter</small></div>
+              <div class="arr"></div>
+              <div class="node st"><code>SesMailClient</code><small>寄信入口</small></div>
+            </div>
+            <div class="branch">
+              <div class="chain">
+                <span class="cond">交易信</span>
+                <div class="arr"><span>當場送出</span></div>
+                <div class="node aws">Amazon SES</div>
+                <div class="arr"></div>
+                <div class="node">讀者信箱</div>
+              </div>
+              <div class="chain">
+                <span class="cond">群發、排程信</span>
+                <div class="arr"><span>寫入寄送時間</span></div>
+                <div class="node st"><code>scheduled_mail</code><small>待寄佇列（資料庫）</small></div>
+                <div class="arr"><span>每 10 秒掃一次</span></div>
+                <div class="node st">派送器<small>認領、限速、退避重試</small></div>
+                <div class="arr"></div>
+                <div class="node aws">Amazon SES</div>
+              </div>
+              <div class="chain">
+                <span class="cond">重試 5 次仍失敗</span>
+                <div class="arr"></div>
+                <div class="node app"><code>EmailLogDeliveryListener</code><small>記錄寄送失敗</small></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="lane">
+            <div class="lane-title">② 退信、檢舉、送達事件</div>
+            <div class="chain">
+              <div class="node aws">Amazon SES</div>
+              <div class="arr"><span>configuration set <code>newsletter</code></span></div>
+              <div class="node aws">SNS <code>ses-events</code><small>轉發</small></div>
+              <div class="arr"></div>
+              <div class="node aws">SQS <code>ses-events</code><small>保管</small></div>
+              <div class="arr"><span>長輪詢 20 秒</span></div>
+              <div class="node st"><code>SqsEventPoller</code><small>拉取事件</small></div>
+              <div class="arr"></div>
+              <div class="node st">驗簽、topic 白名單<small>把 SES MessageId 對回寄送參照</small></div>
+            </div>
+            <div class="branch">
+              <div class="chain">
+                <span class="cond">永久退信、檢舉</span>
+                <div class="arr"></div>
+                <div class="node app"><code>SesSuppressionListener</code><small>自動退訂</small></div>
+              </div>
+              <div class="chain">
+                <span class="cond">送達</span>
+                <div class="arr"></div>
+                <div class="node app"><code>SesDeliveryListener</code><small>寫入 <code>delivered_at</code></small></div>
+              </div>
+              <div class="chain">
+                <span class="cond">不用 SQS 時</span>
+                <div class="node aws">SNS <code>ses-events</code></div>
+                <div class="arr"><span>POST <code>/sesmail/sns</code></span></div>
+                <div class="node st"><code>SnsWebhookController</code><small>同一套驗簽與處理</small></div>
+              </div>
+              <div class="chain">
+                <span class="cond">SQS 處理失敗 5 次</span>
+                <div class="arr"></div>
+                <div class="node aws"><code>ses-events-dlq</code><small>死信佇列，保留 14 天</small></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="lane">
+            <div class="lane-title">③ 額度</div>
+            <div class="chain">
+              <div class="node app"><code>MailQuotaService</code><small>後台額度，再扣掉佇列待寄</small></div>
+              <div class="arr"></div>
+              <div class="node st"><code>SesQuotaService</code></div>
+              <div class="arr"><span>GetAccount</span></div>
+              <div class="node aws">Amazon SES</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- 自建前提：適合能自己架設、維運伺服器的團隊，列出要自己管理的項目 -->
+  <section aria-labelledby="fit-h">
+    <div class="sec-head">
+      <p class="kicker">自己管理</p>
+      <h2 id="fit-h">SES 方案適合誰</h2>
+    </div>
+    <div class="status">
+      <p>自建型適合<b>有能力自己架設、維運伺服器</b>的團隊：程式要一直在線，資料庫自己顧，AWS 主控台也要有人會操作。寄信本身很便宜，代價是下面這些事都由你負責；導入技能會一步步帶你做完。</p>
+    </div>
+    <div class="ops">
+      <div class="role">
+        <h3>主機與程式</h3>
+        <ul class="check">
+          <li><b>常駐的 Spring Boot 服務</b>：派送器和 SQS 拉取器都在程式裡跑，程式停了就不寄信、也不收事件，不適合會自動休眠的主機。</li>
+          <li><b>PostgreSQL</b>：待寄佇列 <code>scheduled_mail</code> 存在你的資料庫。建表、備份、升級 starter 時補上新的 migration，都要自己做。</li>
+          <li><b>卡住的信</b>：程式在送信途中中斷時，信會停在 <code>SENDING</code>。starter 不會自動重寄，要人工確認讀者沒收到，再改回待寄。</li>
+          <li><b>對外端點（只有方式 B）</b>：要有公開的 HTTPS 網址，而且不能被登入或 Host 白名單擋住。</li>
+        </ul>
+      </div>
+      <div class="role">
+        <h3>AWS 帳號設定</h3>
+        <ul class="check">
+          <li><b>網域驗證</b>：在 DNS 加上 SES 提供的記錄，驗證通過才能用自己的網域寄信。</li>
+          <li><b>離開沙箱</b>：申請生產存取權，說明寄信用途並等待審核；之後要調高額度也是自己申請。</li>
+          <li><b>IAM 與金鑰</b>：寄信和查額度只需要 <code>ses:SendEmail</code>、<code>ses:GetAccount</code>，方式 A 再加讀佇列的三項權限。存取金鑰的保管與更換也要自己來。</li>
+          <li><b>configuration set</b>：把 Bounce、Complaint、Delivery 事件送到 SNS topic。用了它就不要再開身分層級的回饋通知，否則同一封退信會收到兩次。</li>
+        </ul>
+      </div>
+      <div class="role">
+        <h3>寄出之後</h3>
+        <ul class="check">
+          <li><b>事件管線</b>：SNS topic，加上 SQS 佇列和死信佇列（方式 A），或 HTTPS 訂閱（方式 B）。</li>
+          <li><b>死信佇列要有人看</b>：處理失敗 5 次的事件會在這裡留 14 天，過期就沒了。</li>
+          <li><b>信譽警報</b>：在 CloudWatch 設退信率、檢舉率警報。比率太高時 AWS 會審查帳號，甚至暫停寄信。</li>
+          <li><b>停寄名單</b>：SES 帳號層級的停寄名單會擋下退信或檢舉過的地址，要恢復寄送得自己去移除。</li>
+        </ul>
+      </div>
+    </div>
+    <p class="lede">沒有人手顧主機和 AWS，或寄量在每天 100 封以內，選託管型服務比較省事。</p>
+  </section>
+
+</main>
+
+<footer class="end">
+  <div class="wrap end-inner">
+    <div>
+      <h2>從導入技能開始</h2>
+      <p>在你常用的 AI agent 裝上 <code>ses-mail-setup</code>，它會先問事件接收方式，再帶你走完整合、AWS 設定與上線。</p>
+    </div>
+    <div class="actions">
+      <a class="btn primary" href="#skill"><svg class="i" aria-hidden="true"><use href="#i-term"/></svg>看安裝指令</a>
+      <a class="btn ghost" href="https://github.com/kevintsai1202/ses-mail-spring-boot-starter" target="_blank" rel="noopener">GitHub 原始碼<svg class="i" aria-hidden="true"><use href="#i-ext"/></svg></a>
+    </div>
+    <p class="fine">MIT License。方案、額度與價格為 2026-10 查證，會變動，以各家官方頁面為準。</p>
+  </div>
+</footer>
+
+<script>
+// 複製安裝指令：剪貼簿被拒時改為選取文字，讓使用者自己按 Ctrl+C
+(function () {
+  var btn = document.getElementById('copy-install');
+  var pre = document.getElementById('install-cmd');
+  var status = document.getElementById('copy-status');
+  if (!btn || !pre || !status) return;
+  var timer = null;
+  function show(msg) {
+    status.textContent = msg;
+    clearTimeout(timer);
+    timer = setTimeout(function () { status.textContent = ''; }, 2500);
+  }
+  function selectText() {
+    var range = document.createRange();
+    range.selectNodeContents(pre);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    show('已選取指令，按 Ctrl+C 複製');
+  }
+  btn.addEventListener('click', function () {
+    var text = pre.innerText.trim();
+    try {
+      navigator.clipboard.writeText(text).then(function () { show('已複製'); }, selectText);
+    } catch (e) {
+      selectText();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
