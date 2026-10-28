@@ -7,6 +7,11 @@ Amazon SES starter for Spring Boot: synchronous transactional mail, a database-b
 - Java 21、Spring Boot 3.5、AWS SDK v2
 - 佇列存在應用程式的 PostgreSQL（`scheduled_mail` 表），以 JdbcClient 存取，不需要 JPA
 - 派送器自帶單執行緒排程器，不需要 `@EnableScheduling`
+- 退信／檢舉／送達事件可選 SQS 拉取或 HTTPS webhook
+
+![自建型寄信流程（SQS 可自選）](docs/images/flow-self.webp)
+
+和託管型寄信服務（ZSend、Resend）的對照、排程與事件接收的取捨、方案費用，見 [架構說明](docs/architecture.md)。
 
 ## 安裝（JitPack）
 
