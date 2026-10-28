@@ -182,6 +182,70 @@ class ScheduledMailQueueTest {
         assertEquals(0, queue.countStuck(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(10)));
     }
 
+    /** 退訂網址隨信存進佇列，單封與批次都一樣；沒給的是 null */
+    @Test
+    void keepsUnsubscribeUrl() {
+        long single = queue.insert(null,
+            new OutgoingMail("a@example.com", "s", "<p>a</p>", "https://example.com/u?t=a"), NOW);
+        queue.insertAll("ses-batch-u", List.of(
+            new OutgoingMail("b@example.com", "s", "<p>b</p>", "https://example.com/u?t=b"),
+            new OutgoingMail("c@example.com", "s", "<p>c</p>")), NOW);
+
+        assertEquals("https://example.com/u?t=a", queue.find(single).orElseThrow().unsubscribeUrl());
+        List<QueuedMail> batch = queue.findDueIds(NOW, 10).stream()
+            .filter(id -> id != single).map(id -> queue.find(id).orElseThrow()).toList();
+        assertEquals(java.util.Set.of("https://example.com/u?t=b", "<null>"), batch.stream()
+            .map(m -> m.unsubscribeUrl() == null ? "<null>" : m.unsubscribeUrl())
+            .collect(java.util.stream.Collectors.toSet()));
+    }
+
+    /** 清 HTML：只清超過保留期的已寄出、已取消；失敗、待寄與較新的列都不動，整列保留 */
+    @Test
+    void clearHtmlOnlyAffectsOldSentAndCancelled() {
+        long sent = enqueue("sent@example.com", NOW);
+        queue.claim(sent);
+        queue.markSent(sent, "msg-sent");
+        long cancelled = enqueue("cancelled@example.com", NOW.plusDays(1));
+        queue.cancel(cancelled);
+        long failed = enqueue("failed@example.com", NOW);
+        queue.claim(failed);
+        queue.markFailed(failed, "rejected");
+        long pending = enqueue("pending@example.com", NOW.plusDays(1));
+
+        assertEquals(0, queue.clearHtml(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(10)), "還在保留期內，不清");
+        assertEquals(2, queue.clearHtml(OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(1)));
+        assertEquals(0, queue.clearHtml(OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(1)), "已清過的不再計數");
+
+        assertEquals("", queue.find(sent).orElseThrow().html());
+        assertEquals("", queue.find(cancelled).orElseThrow().html());
+        assertEquals("<p>內文</p>", queue.find(failed).orElseThrow().html());
+        assertEquals("<p>內文</p>", queue.find(pending).orElseThrow().html());
+        assertEquals(java.util.Optional.of("ses-sched-" + sent), queue.findRefByMessageId("msg-sent"),
+            "清掉 HTML 後仍要能用 MessageId 對回參照");
+    }
+
+    /** 從 0.3.0 升級：舊表沒有 unsubscribe_url，套件附的 schema 要補上欄位，之後才能寫入 */
+    @Test
+    void schemaUpgradesTableFromV030() {
+        org.springframework.jdbc.core.simple.JdbcClient jdbc = org.springframework.jdbc.core.simple.JdbcClient.create(dataSource);
+        jdbc.sql("DROP TABLE scheduled_mail").update();
+        jdbc.sql("""
+            CREATE TABLE scheduled_mail (
+                id BIGSERIAL PRIMARY KEY, batch_ref TEXT, recipient TEXT NOT NULL, subject TEXT NOT NULL,
+                html TEXT NOT NULL, send_at TIMESTAMPTZ NOT NULL, next_attempt_at TIMESTAMPTZ NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING', attempts INT NOT NULL DEFAULT 0,
+                provider_message_id TEXT, error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT scheduled_mail_status_check
+                    CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'CANCELLED')))
+            """).update();
+
+        new ResourceDatabasePopulator(new ClassPathResource(ScheduledMailQueue.SCHEMA_LOCATION)).execute(dataSource);
+
+        long id = queue.insert(null, new OutgoingMail("a@example.com", "s", "<p>a</p>", "https://example.com/u"), NOW);
+        assertEquals("https://example.com/u", queue.find(id).orElseThrow().unsubscribeUrl());
+    }
+
     /** 以 SES MessageId 反查呼叫端參照：批次信回整批參照、排程信回 ses-sched-{id}、查無回空 */
     @Test
     void findsRefByMessageId() {

@@ -76,11 +76,23 @@ IAM 主控台 → Users → 應用程式的使用者 → Security credentials �
 
 ## 離開沙箱
 
-沙箱只能寄給已驗證的信箱，每天 200 封、每秒 1 封。SES 主控台 → Account dashboard → Request production access：
+沙箱只能寄給已驗證的信箱，每天 200 封、每秒 1 封。**先完成網域驗證再申請**，AWS 說這樣比較快通過。
 
-- Mail type：電子報選 Marketing，只有交易信選 Transactional。
+SES 主控台 → Account dashboard → 沙箱提示的 View Get set up page（完成設定）→ Request production access，表單欄位：
+
+- Mail type：電子報、廣告信選 Marketing，只有交易信選 Transactional。
 - Website URL：讓審核者看得到訂閱方式的網址。
-- Use case description：照實填寫下面的範本，`<...>` 換成實際內容。
+- Additional contacts：接收審核通知的信箱，最多 4 個。
+- Preferred contact language：English 或 Japanese。
+- Acknowledgement：勾選同意只寄給明確要求收信的人，並有處理退信與檢舉的流程。
+
+也可以在 CloudShell 用 CLI 申請：
+
+```powershell
+aws sesv2 put-account-details --production-access-enabled --mail-type MARKETING --website-url https://example.com --additional-contact-email-addresses ops@example.com --contact-language EN
+```
+
+送出後 AWS 會在 96 小時內初步回覆，需要補資料會更久。AWS 要求說明用途時（在 Support Center 的案件裡回覆），照實填寫下面的範本，`<...>` 換成實際內容：
 
 ```text
 We send <content, e.g. a weekly technical newsletter in Traditional Chinese> to about <N> subscribers, <frequency>, plus transactional emails (<e.g. login links, subscription confirmation>).
@@ -89,7 +101,7 @@ Bounces and complaints are delivered to our application through an SES configura
 We expect fewer than <N> emails per month.
 ```
 
-通常一天內回覆。被拒絕或被要求補資料時，到 Support Center 找到這個案件，照 AWS 的回覆補充說明：名單怎麼來、退訂怎麼做、退信怎麼處理、寄送頻率與量。結果可以用 `scripts/ses-status.py` 查（「審核狀態」欄位）。
+被拒絕或狀態顯示「需要更多資訊」時，到 Support Center 找到這個案件，照 AWS 的回覆補充說明：名單怎麼來、退訂怎麼做、退信怎麼處理、寄送頻率與量。結果可以用 `scripts/ses-status.py` 查（「審核狀態」欄位）。
 
 ## 信譽警報
 

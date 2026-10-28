@@ -83,7 +83,8 @@ public class SesMailAutoConfiguration {
                                                            ObjectProvider<DeliveryListener> listeners,
                                                            SesMailProperties properties) {
         return new ScheduledMailDispatcher(queue, client, () -> listeners.orderedStream().toList(),
-            properties.getMaxSendRate(), properties.getDispatchInterval(), Clock.systemUTC(), Thread::sleep);
+            properties.getMaxSendRate(), properties.getDispatchInterval(), properties.getQueue().getHtmlRetention(),
+            Clock.systemUTC(), Thread::sleep);
     }
 
     /** 額度查詢 */

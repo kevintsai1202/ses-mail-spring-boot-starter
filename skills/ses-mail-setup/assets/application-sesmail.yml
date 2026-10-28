@@ -21,6 +21,8 @@ sesmail:
     # 用 Flyway 管 schema 時保持 false，把 ses-mail-postgresql.sql 複製成下一個 migration；
     # 沒用 Flyway 才設 true，啟動時以 IF NOT EXISTS 建表
     initialize-schema: ${SESMAIL_INITIALIZE_SCHEMA:false}
+    # 已寄出、已取消信件的 HTML 保留多久，之後清成空字串（整列保留）；0 表示不清（0.4.0 起）
+    html-retention: ${SESMAIL_HTML_RETENTION:7d}
   # 退信／檢舉／送達事件：SES configuration set → SNS topic，接收方式二選一，兩個都開會收到重複事件
   sns:
     # webhook 模式：SNS 直接 POST 到 /sesmail/sns

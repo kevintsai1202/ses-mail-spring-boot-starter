@@ -9,14 +9,15 @@ import java.time.OffsetDateTime;
  * @param batchRef          批次群發的整批參照；排程單封為 null
  * @param recipient         收件人
  * @param subject           主旨
- * @param html              完整 HTML 內文
+ * @param html              完整 HTML 內文；已寄出且超過保留期的會被清成空字串
+ * @param unsubscribeUrl    一鍵退訂網址；沒有為 null
  * @param status            狀態（見 STATUS_* 常數）
  * @param attempts          已嘗試次數（認領時 +1）
  * @param providerMessageId 送出後 SES 回傳的 MessageId
  * @param nextAttemptAt     下次可嘗試時間
  */
 public record QueuedMail(long id, String batchRef, String recipient, String subject, String html,
-                         String status, int attempts, String providerMessageId,
+                         String unsubscribeUrl, String status, int attempts, String providerMessageId,
                          OffsetDateTime nextAttemptAt) {
 
     /** 待寄：等待到期 */

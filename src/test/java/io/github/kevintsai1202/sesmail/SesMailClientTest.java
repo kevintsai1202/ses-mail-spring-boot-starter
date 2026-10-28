@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
+import software.amazon.awssdk.services.sesv2.model.MessageHeader;
 import software.amazon.awssdk.services.sesv2.model.SendEmailRequest;
 import software.amazon.awssdk.services.sesv2.model.SendEmailResponse;
 
@@ -66,6 +67,37 @@ class SesMailClientTest {
         assertEquals("第 030 期：Vibe Coding 之後", request.content().simple().subject().data());
         assertEquals("UTF-8", request.content().simple().body().html().charset());
         assertEquals("<p>你好</p>", request.content().simple().body().html().data());
+    }
+
+    /** 有退訂網址：依序加上 List-Unsubscribe 與 List-Unsubscribe-Post（RFC 8058 一鍵退訂） */
+    @Test
+    void deliverWithUnsubscribeUrlAddsOneClickHeaders() {
+        when(ses.sendEmail(any(SendEmailRequest.class)))
+            .thenReturn(SendEmailResponse.builder().messageId("ses-msg-u").build());
+
+        client.deliver("reader@example.com", "s", "<p>h</p>", "https://example.com/unsubscribe?token=abc");
+
+        ArgumentCaptor<SendEmailRequest> captor = ArgumentCaptor.forClass(SendEmailRequest.class);
+        verify(ses).sendEmail(captor.capture());
+        List<MessageHeader> headers = captor.getValue().content().simple().headers();
+        assertEquals(List.of(
+            MessageHeader.builder().name("List-Unsubscribe").value("<https://example.com/unsubscribe?token=abc>").build(),
+            MessageHeader.builder().name("List-Unsubscribe-Post").value("List-Unsubscribe=One-Click").build()),
+            headers);
+    }
+
+    /** 沒有退訂網址（含交易信 send）：不帶任何自訂標頭 */
+    @Test
+    void deliverWithoutUnsubscribeUrlAddsNoHeaders() {
+        when(ses.sendEmail(any(SendEmailRequest.class)))
+            .thenReturn(SendEmailResponse.builder().messageId("ses-msg-n").build());
+
+        client.deliver("reader@example.com", "s", "<p>h</p>", null);
+        client.send("reader@example.com", "s", "<p>h</p>");
+
+        ArgumentCaptor<SendEmailRequest> captor = ArgumentCaptor.forClass(SendEmailRequest.class);
+        verify(ses, org.mockito.Mockito.times(2)).sendEmail(captor.capture());
+        captor.getAllValues().forEach(request -> assertFalse(request.content().simple().hasHeaders()));
     }
 
     /** 未設定回信地址與 configuration set 時，請求不帶這兩個欄位 */

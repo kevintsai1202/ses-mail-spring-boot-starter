@@ -24,17 +24,17 @@ public class ScheduledMailQueue {
     /** 套件附的建表 SQL 在 classpath 上的位置 */
     public static final String SCHEMA_LOCATION = "io/github/kevintsai1202/sesmail/schema/ses-mail-postgresql.sql";
 
-    /** 單次批次入列的上限：整批是一條 INSERT，參數數量受 PostgreSQL 65535 限制 */
+    /** 單次批次入列的上限：整批是一條 INSERT，每封 7 個參數，總數受 PostgreSQL 65535 限制 */
     static final int MAX_BATCH = 5000;
 
     /** 查詢列欄位 */
     private static final String COLUMNS =
-        "id, batch_ref, recipient, subject, html, status, attempts, provider_message_id, next_attempt_at";
+        "id, batch_ref, recipient, subject, html, unsubscribe_url, status, attempts, provider_message_id, next_attempt_at";
 
     /** 資料列轉成 {@link QueuedMail} */
     private static final RowMapper<QueuedMail> ROW_MAPPER = (rs, i) -> new QueuedMail(
         rs.getLong("id"), rs.getString("batch_ref"), rs.getString("recipient"),
-        rs.getString("subject"), rs.getString("html"), rs.getString("status"),
+        rs.getString("subject"), rs.getString("html"), rs.getString("unsubscribe_url"), rs.getString("status"),
         rs.getInt("attempts"), rs.getString("provider_message_id"),
         rs.getObject("next_attempt_at", OffsetDateTime.class));
 
@@ -48,10 +48,10 @@ public class ScheduledMailQueue {
     /** 寫入一封信，回傳佇列 id；到期時間初始等於預定寄出時間 */
     public long insert(String batchRef, OutgoingMail mail, OffsetDateTime sendAt) {
         return jdbc.sql("""
-                INSERT INTO scheduled_mail (batch_ref, recipient, subject, html, send_at, next_attempt_at)
-                VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+                INSERT INTO scheduled_mail (batch_ref, recipient, subject, html, unsubscribe_url, send_at, next_attempt_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """)
-            .params(batchRef, mail.to(), mail.subject(), mail.html(), sendAt, sendAt)
+            .params(batchRef, mail.to(), mail.subject(), mail.html(), mail.unsubscribeUrl(), sendAt, sendAt)
             .query(Long.class).single();
     }
 
@@ -71,19 +71,35 @@ public class ScheduledMailQueue {
             throw new IllegalArgumentException("單次入列最多 " + MAX_BATCH + " 封，請由呼叫端切批");
         }
         StringBuilder sql = new StringBuilder(
-            "INSERT INTO scheduled_mail (batch_ref, recipient, subject, html, send_at, next_attempt_at) VALUES ");
-        List<Object> params = new ArrayList<>(mails.size() * 6);
+            "INSERT INTO scheduled_mail (batch_ref, recipient, subject, html, unsubscribe_url, send_at, next_attempt_at) VALUES ");
+        List<Object> params = new ArrayList<>(mails.size() * 7);
         for (int i = 0; i < mails.size(); i++) {
             OutgoingMail mail = mails.get(i);
-            sql.append(i == 0 ? "" : ", ").append("(?, ?, ?, ?, ?, ?)");
+            sql.append(i == 0 ? "" : ", ").append("(?, ?, ?, ?, ?, ?, ?)");
             params.add(batchRef);
             params.add(mail.to());
             params.add(mail.subject());
             params.add(mail.html());
+            params.add(mail.unsubscribeUrl());
             params.add(sendAt);
             params.add(sendAt);
         }
         return jdbc.sql(sql.toString()).params(params).update();
+    }
+
+    /**
+     * 清掉舊信的 HTML：已寄出、已取消，且最後狀態變更早於 {@code before} 的列，html 改成空字串。
+     *
+     * <p>整列保留：退信與送達事件可能晚到，仍要靠 provider_message_id 對回參照。
+     * 失敗的信不清，留給人工判斷要不要補寄。</p>
+     *
+     * @return 清掉的列數
+     */
+    public int clearHtml(OffsetDateTime before) {
+        return jdbc.sql("""
+                UPDATE scheduled_mail SET html = ''
+                WHERE status IN ('SENT', 'CANCELLED') AND updated_at < ? AND html <> ''
+                """).param(before).update();
     }
 
     /** 到期的待寄信 id（依到期時間、id 排序） */

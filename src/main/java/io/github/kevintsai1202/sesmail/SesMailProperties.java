@@ -79,9 +79,13 @@ public class SesMailProperties {
     public static class Queue {
         /** 啟動時以 IF NOT EXISTS 建立 scheduled_mail 表；用 Flyway 的專案請保持 false、把 SQL 放進自己的 migration */
         private boolean initializeSchema = false;
+        /** 已寄出、已取消信件的 HTML 保留多久，之後清成空字串（整列保留）；設 0 表示不清 */
+        private Duration htmlRetention = Duration.ofDays(7);
 
         public boolean isInitializeSchema() { return initializeSchema; }
         public void setInitializeSchema(boolean initializeSchema) { this.initializeSchema = initializeSchema; }
+        public Duration getHtmlRetention() { return htmlRetention; }
+        public void setHtmlRetention(Duration htmlRetention) { this.htmlRetention = htmlRetention; }
     }
 
     public boolean isEnabled() { return enabled; }

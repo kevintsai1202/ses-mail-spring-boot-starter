@@ -26,7 +26,7 @@ Amazon SES starter for Spring Boot: synchronous transactional mail, a database-b
 <dependency>
   <groupId>com.github.kevintsai1202</groupId>
   <artifactId>ses-mail-spring-boot-starter</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
 </dependency>
 ```
 
@@ -47,6 +47,8 @@ sesmail:
   configuration-set: ""                # 選填
   max-send-rate: 5                     # 不要高於 SES 帳號的 Maximum send rate（沙箱為 1）
   dispatch-interval: 10s
+  queue:
+    html-retention: 7d                 # 已寄出、已取消信件的 HTML 保留多久（整列保留），0 表示不清
 ```
 
 IAM 權限只需要 `ses:SendEmail` 與 `ses:GetAccount`。
@@ -86,6 +88,17 @@ class EmailLogUpdater implements DeliveryListener {
     }
 }
 ```
+
+一鍵退訂（0.4.0 起）：群發、排程信帶上退訂網址，寄出時會加 `List-Unsubscribe` 與 `List-Unsubscribe-Post: List-Unsubscribe=One-Click`（RFC 8058）。Gmail、Yahoo 對每天寄超過 5,000 封的寄件者要求行銷信支援一鍵退訂。
+
+```java
+new OutgoingMail("a@example.com", "第 1 期", html, "https://example.com/unsubscribe?email=a%40example.com&token=…");
+```
+
+- 網址要 https、只能有可列印 ASCII（中文先做 URL 編碼）、最多 993 字；不合規的在建立 `OutgoingMail` 時就拋例外。
+- 退訂的處理由應用程式負責：同一個網址要接受 `POST`、內容為 `List-Unsubscribe=One-Click`，不要求登入或 CSRF token、不轉址、重複送也沒關係。Gmail 也可能用 `GET` 開啟同一個網址。
+- 信件內文仍要有看得到的退訂連結。交易信 `send()` 不加這兩個標頭。
+- 第一次正式寄出後，看收到的信的 `DKIM-Signature` 標頭裡 `h=` 是否包含這兩個標頭（RFC 8058 要求它們被 DKIM 簽到）。
 
 額度：`SesQuotaService.snapshot()` 回傳狀態（`sandbox`／`paused`／`healthy`…）、24 小時上限、已寄、佇列待寄與 `remaining()`。每次呼叫都會打 SES API，請自行快取。
 
@@ -131,11 +144,26 @@ listener 拋例外時：SQS 模式保留訊息重試；webhook 模式只記 log�
 
 AWS 端（SQS 模式）：SNS topic → SQS 佇列＋死信佇列（佇列政策允許該 topic 發送）→ 佇列訂閱 topic（不要開 raw message delivery）→ SES configuration set 加事件目的地（Bounce、Complaint、Delivery）指向 topic → IAM 加 `sqs:ReceiveMessage`、`sqs:DeleteMessage`、`sqs:ChangeMessageVisibility`。用了 configuration set 就**不要**再設身分層級的回饋通知，否則同一封退信會收到兩次。
 
+升級注意（0.4.0）：
+
+- schema 多了 `unsubscribe_url` 欄位與 `idx_scheduled_mail_html_purge` 部分索引。用 Flyway 的專案**先加 migration 再升版**，否則第一筆入列就會失敗：
+
+  ```sql
+  ALTER TABLE scheduled_mail ADD COLUMN IF NOT EXISTS unsubscribe_url TEXT;
+  CREATE INDEX IF NOT EXISTS idx_scheduled_mail_html_purge ON scheduled_mail (updated_at) WHERE html <> '';
+  ```
+
+- 預設會清理 HTML：已寄出、已取消超過 7 天的信，`html` 會被清成空字串（整列保留，退信事件照樣對得回參照）。要保留就設 `sesmail.queue.html-retention: 0`。
+- `OutgoingMail` 多了第 4 個欄位 `unsubscribeUrl`（原本 3 個參數的寫法照常可用）；`QueuedMail` 多了 `unsubscribeUrl`。
+- 派送器一輪撈滿 200 封時不再等派送間隔，直接撈下一輪；速率仍由 `max-send-rate` 控制。
+- 超過每秒上限時 SES 回的 `ThrottlingException`（SDK 沒有對應類別）改為暫時性錯誤，會退回佇列重試。
+
 升級注意（0.3.0）：`SesBounce`／`SesComplaint` 多了第一個欄位 `ref`；schema 多了 `provider_message_id` 索引（用 Flyway 的專案請自行加進 migration）。
 
 ## 派送規則
 
-- 節流、網路錯誤、SES 5xx：退回佇列，30 秒、60 秒、120 秒…退避，最多 5 次
+- 每封之間依 `max-send-rate` 暫停；一輪撈滿 200 封時不等 `dispatch-interval`，直接撈下一輪
+- 節流（含 SES 回的 `ThrottlingException`）、網路錯誤、SES 5xx：退回佇列，30 秒、60 秒、120 秒…退避，最多 5 次
 - 其他錯誤（位址被拒、網域未驗證、帳號停權）：直接失敗，通知 `onFailed`
 - 程序中斷後卡在 `SENDING` 的信**不會自動重寄**（無法得知 SES 是否已收到），每 30 分鐘記一次警告，請人工處理：
 

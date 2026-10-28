@@ -8,3 +8,4 @@ logs/
 .vscode/
 .env
 HANDOFF.md
+.factorypath

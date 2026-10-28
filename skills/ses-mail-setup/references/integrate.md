@@ -4,7 +4,7 @@
 
 ## 1. 加依賴（JitPack）
 
-先查最新版本。tag 不加 v，例如 `0.3.0`；SQS 拉取需要 0.3.0 以上。
+先查最新版本。tag 不加 v，例如 `0.4.0`；SQS 拉取需要 0.3.0 以上，一鍵退訂標頭與 HTML 清理需要 0.4.0 以上。
 
 ```powershell
 git ls-remote --tags https://github.com/kevintsai1202/ses-mail-spring-boot-starter
@@ -56,7 +56,7 @@ Invoke-WebRequest "https://raw.githubusercontent.com/kevintsai1202/ses-mail-spri
 
 沒用 Flyway：設 `SESMAIL_INITIALIZE_SCHEMA=true`，啟動時以 `IF NOT EXISTS` 建表。
 
-升級 starter 時看 README 的「升級注意」，schema 有變（例如 0.3.0 加了 `provider_message_id` 索引）就要補 migration。
+升級 starter 時看 README 的「升級注意」，schema 有變就要補 migration，而且要**先加 migration 再升版**。例如 0.4.0 加了 `unsubscribe_url` 欄位，沒補的話第一筆入列就會失敗。
 
 ## 4. 寄信
 
@@ -83,6 +83,20 @@ class NewsletterService {
 ```
 
 派送器在應用程式裡跑：程式停機時排程信不會寄出，恢復後補寄已過時間的信。
+
+### 一鍵退訂（電子報、廣告信必做）
+
+Gmail、Yahoo 要求每天寄超過 5,000 封的寄件者，行銷信要支援一鍵退訂（RFC 8058）。群發與排程信帶上退訂網址，starter 寄出時會加 `List-Unsubscribe` 與 `List-Unsubscribe-Post: List-Unsubscribe=One-Click`：
+
+```java
+new OutgoingMail(to, subject, html, unsubscribeUrlFor(to)); // 例如 https://example.com/unsubscribe?email=…&token=…
+```
+
+- 網址要 https、只能有可列印 ASCII（中文先做 URL 編碼）、最多 993 字；不合規的在建立時就拋例外。
+- 網址裡放簽章過的 token，別人不能拿 email 猜出退訂連結。
+- 應用程式要在同一個網址補上 `POST`：內容是 `List-Unsubscribe=One-Click`，不要求登入或 CSRF token、不轉址、重複送也回成功。Gmail 也可能用 `GET` 開同一個網址，原本的退訂頁照常即可。
+- 內文仍要有看得到的退訂連結；交易信 `send()` 不加這兩個標頭。
+- 上線後寄一封給自己，看 `DKIM-Signature` 的 `h=` 有沒有包含 `List-Unsubscribe` 與 `List-Unsubscribe-Post`（RFC 8058 要求被 DKIM 簽到）。
 
 ## 5. 寄送結果
 

@@ -6,6 +6,7 @@ import software.amazon.awssdk.services.sesv2.model.Content;
 import software.amazon.awssdk.services.sesv2.model.Destination;
 import software.amazon.awssdk.services.sesv2.model.EmailContent;
 import software.amazon.awssdk.services.sesv2.model.Message;
+import software.amazon.awssdk.services.sesv2.model.MessageHeader;
 import software.amazon.awssdk.services.sesv2.model.SendEmailRequest;
 
 import java.time.Clock;
@@ -98,15 +99,30 @@ public class SesMailClient {
      * <p>主旨與內文都明確指定 UTF-8：SES 的 Content 預設是 7-bit ASCII，不指定的話中文會變亂碼。</p>
      */
     public String deliver(String to, String subject, String html) {
+        return deliver(to, subject, html, null);
+    }
+
+    /**
+     * 同 {@link #deliver(String, String, String)}，有退訂網址時加上 RFC 8058 一鍵退訂標頭。
+     *
+     * <p>SES 要求 {@code List-Unsubscribe} 在前、{@code List-Unsubscribe-Post} 在後。
+     * 網址格式已在 {@link OutgoingMail} 建立時檢查過。</p>
+     *
+     * @param unsubscribeUrl 一鍵退訂網址；null 表示不加標頭
+     */
+    public String deliver(String to, String subject, String html, String unsubscribeUrl) {
+        Message.Builder message = Message.builder()
+            .subject(utf8(subject))
+            .body(Body.builder().html(utf8(html)).build());
+        if (hasText(unsubscribeUrl)) {
+            message.headers(
+                MessageHeader.builder().name("List-Unsubscribe").value("<" + unsubscribeUrl + ">").build(),
+                MessageHeader.builder().name("List-Unsubscribe-Post").value("List-Unsubscribe=One-Click").build());
+        }
         SendEmailRequest.Builder request = SendEmailRequest.builder()
             .fromEmailAddress(from)
             .destination(Destination.builder().toAddresses(to).build())
-            .content(EmailContent.builder()
-                .simple(Message.builder()
-                    .subject(utf8(subject))
-                    .body(Body.builder().html(utf8(html)).build())
-                    .build())
-                .build());
+            .content(EmailContent.builder().simple(message.build()).build());
         if (hasText(replyTo)) {
             request.replyToAddresses(replyTo);
         }

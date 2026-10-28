@@ -27,7 +27,9 @@ import java.util.function.Supplier;
  *   <li>先以條件式 UPDATE 認領（PENDING → SENDING），認領不到就跳過——那一列剛被取消或已被處理。</li>
  *   <li>節流、網路錯誤、5xx 是暫時性的：退回 PENDING，依 30 秒 × 2^(n−1) 退避，
  *       達 {@link #MAX_ATTEMPTS} 次才放棄。其他錯誤（收件位址被拒、網域未驗證、帳號停權）重試也沒用，直接失敗。</li>
- *   <li>每封之間依速率暫停（沙箱每秒 1 封）。</li>
+ *   <li>每封之間依速率暫停（沙箱每秒 1 封）。一輪撈滿 {@link #BATCH_LIMIT} 封時不等派送間隔，直接撈下一輪，
+ *       積壓時實際速度接近每秒上限。</li>
+ *   <li>設定了 HTML 保留期時，每小時把超過保留期的已寄出、已取消信件 HTML 清成空字串（整列保留）。</li>
  *   <li>listener 拋出的例外只記 log，不中斷派送。</li>
  *   <li>程序中斷後卡在 SENDING 的列<b>絕不自動重寄</b>：無法得知 SES 收到了沒，
  *       重複寄出一期電子報比漏寄一封更糟，只定期回報數量交給人工確認。</li>
@@ -50,6 +52,8 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
     private static final Duration STUCK_AFTER = Duration.ofMinutes(10);
     /** 卡住檢查的間隔 */
     private static final Duration STUCK_CHECK_INTERVAL = Duration.ofMinutes(30);
+    /** 清理舊 HTML 的間隔 */
+    private static final Duration HTML_PURGE_INTERVAL = Duration.ofHours(1);
     /** 停止時等待進行中寄送的上限 */
     private static final Duration STOP_TIMEOUT = Duration.ofSeconds(30);
     /** 錯誤訊息寫進資料庫前截斷的長度 */
@@ -69,6 +73,8 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
     private final long pauseMillis;
     /** 派送間隔 */
     private final Duration interval;
+    /** 已寄出信件 HTML 的保留期；null 或 0 表示不清 */
+    private final Duration htmlRetention;
     private final Clock clock;
     private final Sleeper sleeper;
 
@@ -77,13 +83,21 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
     /** 停止中：進行中的那一輪寄完目前這封就結束 */
     private volatile boolean stopping;
 
-    /**
-     * @param maxSendRate 每秒最多送幾封；應不高於 SES 帳號的 MaxSendRate
-     * @param interval    多久掃一次佇列
-     */
+    /** 不清理舊 HTML 的派送器 */
     public ScheduledMailDispatcher(ScheduledMailQueue queue, SesMailClient client,
                                    Supplier<List<DeliveryListener>> listeners, double maxSendRate,
                                    Duration interval, Clock clock, Sleeper sleeper) {
+        this(queue, client, listeners, maxSendRate, interval, null, clock, sleeper);
+    }
+
+    /**
+     * @param maxSendRate   每秒最多送幾封；應不高於 SES 帳號的 MaxSendRate
+     * @param interval      多久掃一次佇列
+     * @param htmlRetention 已寄出、已取消信件的 HTML 保留多久；null 或 0 表示不清
+     */
+    public ScheduledMailDispatcher(ScheduledMailQueue queue, SesMailClient client,
+                                   Supplier<List<DeliveryListener>> listeners, double maxSendRate,
+                                   Duration interval, Duration htmlRetention, Clock clock, Sleeper sleeper) {
         if (maxSendRate <= 0) {
             throw new IllegalArgumentException("sesmail.max-send-rate 必須大於 0");
         }
@@ -92,6 +106,7 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
         this.listeners = listeners;
         this.pauseMillis = (long) Math.ceil(1000.0 / maxSendRate);
         this.interval = interval;
+        this.htmlRetention = htmlRetention;
         this.clock = clock;
         this.sleeper = sleeper;
     }
@@ -111,6 +126,10 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
         executor.scheduleWithFixedDelay(this::tick, interval.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
         executor.scheduleWithFixedDelay(this::reportStuck, Duration.ofMinutes(1).toMillis(),
             STUCK_CHECK_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+        if (purgeEnabled()) {
+            executor.scheduleWithFixedDelay(this::purgeTick, Duration.ofMinutes(5).toMillis(),
+                HTML_PURGE_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+        }
     }
 
     /** 停止：不再開始新一輪，等待進行中的寄送（最多 30 秒） */
@@ -141,9 +160,20 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
     /** 排程進入點：例外不往外拋，否則排程器會靜默停止後續執行 */
     private void tick() {
         try {
-            dispatchDue();
+            drain();
         } catch (RuntimeException e) {
             log.error("SES 待寄佇列派送失敗：{}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 連續派送：一輪撈滿 {@link #BATCH_LIMIT} 封就接著撈下一輪，直到撈不滿或正在停止。
+     * 是否繼續看「撈到幾封」而不是「寄出幾封」：撈滿代表可能還有積壓。
+     */
+    void drain() {
+        // 暫停被中斷時那一輪會提早結束；這時也要停，否則會不經暫停連續送出
+        while (!stopping && dispatchRound().fetched() >= BATCH_LIMIT && !Thread.currentThread().isInterrupted()) {
+            // 繼續下一輪；速率仍由每封之間的暫停控制
         }
     }
 
@@ -153,6 +183,20 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
      * @return 本輪成功交給 SES 的封數
      */
     public int dispatchDue() {
+        return dispatchRound().sent();
+    }
+
+    /**
+     * 一輪的結果。
+     *
+     * @param fetched 撈到的封數（撈滿代表可能還有積壓）
+     * @param sent    成功交給 SES 的封數
+     */
+    private record Round(int fetched, int sent) {
+    }
+
+    /** 派送一輪的實作 */
+    private Round dispatchRound() {
         OffsetDateTime now = now();
         List<Long> ids = queue.findDueIds(now, BATCH_LIMIT);
         int sent = 0;
@@ -168,7 +212,7 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
                 continue;
             }
             try {
-                String messageId = client.deliver(mail.recipient(), mail.subject(), mail.html());
+                String messageId = client.deliver(mail.recipient(), mail.subject(), mail.html(), mail.unsubscribeUrl());
                 queue.markSent(id, messageId);
                 sent++;
                 notifyListeners(l -> l.onSent(mail.providerRef(), mail.recipient(), messageId));
@@ -182,7 +226,37 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
         if (sent > 0) {
             log.info("SES 待寄佇列：本輪送出 {} 封（撈到 {} 封）", sent, ids.size());
         }
-        return sent;
+        return new Round(ids.size(), sent);
+    }
+
+    /** 是否有設定 HTML 保留期 */
+    private boolean purgeEnabled() {
+        return htmlRetention != null && !htmlRetention.isZero() && !htmlRetention.isNegative();
+    }
+
+    /**
+     * 清掉超過保留期的已寄出、已取消信件 HTML。
+     *
+     * @return 清掉的列數；未設定保留期時為 0
+     */
+    public int purgeHtml() {
+        if (!purgeEnabled()) {
+            return 0;
+        }
+        int cleared = queue.clearHtml(now().minus(htmlRetention));
+        if (cleared > 0) {
+            log.info("SES 待寄佇列：清掉 {} 封超過 {} 天的已寄出信件 HTML", cleared, htmlRetention.toDays());
+        }
+        return cleared;
+    }
+
+    /** 清理的排程進入點：例外不往外拋，否則排程器會靜默停止後續執行 */
+    void purgeTick() {
+        try {
+            purgeHtml();
+        } catch (RuntimeException e) {
+            log.warn("清理已寄出信件 HTML 失敗：{}", e.getMessage());
+        }
     }
 
     /**
@@ -230,13 +304,18 @@ public class ScheduledMailDispatcher implements SmartLifecycle {
         }
     }
 
-    /** 節流、網路錯誤與 SES 端 5xx 視為暫時性，其餘重試無用 */
+    /**
+     * 節流、網路錯誤與 SES 端 5xx 視為暫時性，其餘重試無用。
+     *
+     * <p>節流除了 SDK 有對應類別的例外，也包含 SDK 認得的節流錯誤碼：超過每秒上限時 SES 文件寫的是
+     * {@code ThrottlingException}（4xx），SDK 沒有對應類別，只能靠 {@link AwsServiceException#isThrottlingException()} 辨識。</p>
+     */
     static boolean isTransient(RuntimeException e) {
         if (e instanceof TooManyRequestsException || e instanceof LimitExceededException) {
             return true;
         }
         if (e instanceof AwsServiceException service) {
-            return service.statusCode() >= 500;
+            return service.isThrottlingException() || service.statusCode() >= 500;
         }
         return e instanceof SdkClientException;
     }
